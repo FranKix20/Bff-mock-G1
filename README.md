@@ -84,7 +84,7 @@ npm start
 
 ### GET /health
 ```
-GET https://bff-mock.vercel.app/health
+GET https://bff-mock-g1.vercel.app/health
 ```
 ```json
 {
@@ -97,7 +97,7 @@ GET https://bff-mock.vercel.app/health
 
 ### POST /api/auth/login
 ```
-POST https://bff-mock.vercel.app/api/auth/login
+POST https://bff-mock-g1.vercel.app/api/auth/login
 Content-Type: application/json
 
 {
@@ -122,7 +122,7 @@ Content-Type: application/json
 
 ### GET /api/notifications?userId=
 ```
-GET https://bff-mock.vercel.app/api/notifications?userId=3d9a1f44-1b2a-4c3d-8e5f-aabbccddeeff
+GET https://bff-mock-g1.vercel.app/api/notifications?userId=3d9a1f44-1b2a-4c3d-8e5f-aabbccddeeff
 ```
 ```json
 {
