@@ -12,7 +12,7 @@ const allowedOrigins = [
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
     process.env.FRONTEND_URL,
-    'https://tu-frontend.vercel.app'
+    'https://bff-mock-g1.vercel.app'
 ];
 
 app.use(cors({
@@ -62,7 +62,7 @@ app.get('/', (req, res) => {
             health: '/health'
         },
         links: {
-            docs: 'https://github.com/FranKix20/Bff-mock'
+            docs: 'https://github.com/FranKix20/Bff-mock-G1'
         }
     });
 });
