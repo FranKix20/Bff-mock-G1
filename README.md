@@ -2,7 +2,7 @@
 
 Backend For Frontend desplegado como mock en Vercel. Actúa como orquestador entre el frontend y los servicios de Grupos 2–5 y 9.
 
-**URL pública:** https://bff-mock.vercel.app
+**URL pública:** https://bff-mock-g1.vercel.app
 
 ---
 
