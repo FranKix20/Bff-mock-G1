@@ -36,7 +36,14 @@ jobs:
         run: |
           node index.js &
           SERVER_PID=$!
-          sleep 2
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:3001/health > /dev/null; then
+              echo "Servidor arriba"
+              break
+            fi
+            echo "Esperando al servidor... ($i)"
+            sleep 1
+          done
           curl -f http://localhost:3001/health || (echo "El health check falló" && exit 1)
           kill $SERVER_PID
         env:
