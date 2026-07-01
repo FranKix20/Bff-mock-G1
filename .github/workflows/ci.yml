@@ -9,8 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      NODE_ENV: test
 
     strategy:
       matrix:
@@ -31,6 +29,8 @@ jobs:
 
       - name: Ejecutar pruebas funcionales
         run: npm test
+        env:
+          NODE_ENV: test
 
       - name: Verificar que el servidor arranca correctamente
         run: |
@@ -39,3 +39,5 @@ jobs:
           sleep 2
           curl -f http://localhost:3001/health || (echo "El health check falló" && exit 1)
           kill $SERVER_PID
+        env:
+          NODE_ENV: development
