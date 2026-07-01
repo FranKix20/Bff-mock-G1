@@ -94,21 +94,28 @@ app.get('/', (req, res) => {
     });
 });
 
-const mount = (path, modulePath, label) => {
+// IMPORTANTE: los require() deben usar un string literal directo en el
+// call site (no una variable) para que el empaquetador de Vercel
+// (Node File Trace) pueda detectar estáticamente estos archivos e
+// incluirlos en la función serverless. Con require(variable), Vercel
+// no los detecta, no los empaqueta, y en producción fallan con
+// "Cannot find module" (silenciado por el catch), dejando todas las
+// rutas /api/* en 404 aunque localmente funcionen perfecto.
+const mount = (path, mod, label) => {
     try {
-        app.use(path, require(modulePath));
+        app.use(path, mod);
         console.log(`Rutas de ${label} cargadas`);
     } catch (err) {
         console.warn(`Rutas de ${label} no encontradas:`, err.message);
     }
 };
 
-mount('/api/auth', './api/auth/routes', 'Auth');
-mount('/api/products', './api/products/routes', 'Productos');
-mount('/api/cart', './api/cart/routes', 'Carrito');
-mount('/api/checkout', './api/checkout/routes', 'Checkout');
-mount('/api/orders', './api/orders/routes', 'Ordenes');
-mount('/api/notifications', './api/notifications/routes', 'Notificaciones');
+mount('/api/auth', require('./api/auth/routes'), 'Auth');
+mount('/api/products', require('./api/products/routes'), 'Productos');
+mount('/api/cart', require('./api/cart/routes'), 'Carrito');
+mount('/api/checkout', require('./api/checkout/routes'), 'Checkout');
+mount('/api/orders', require('./api/orders/routes'), 'Ordenes');
+mount('/api/notifications', require('./api/notifications/routes'), 'Notificaciones');
 
 app.use((req, res) => {
     sendError(req, res, 404, 'ROUTE_NOT_FOUND', `Ruta no encontrada: ${req.method} ${req.path}`);
