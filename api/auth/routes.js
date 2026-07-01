@@ -71,7 +71,15 @@ router.post('/login', async (req, res, next) => {
         });
 
         const body = result.data;
-        const token = body.access_token || uuid();
+        // En modo mock/degradado el access_token es un valor de relleno fijo
+        // (mismo string en todos los logins), así que no sirve como clave de
+        // sesión: dos usuarios distintos se pisarían la sesión en la BD. Solo
+        // confiamos en el access_token devuelto cuando viene de un upstream
+        // real; en cualquier otro caso generamos un token único por login.
+        const token = result.source === 'upstream' && body.access_token
+            ? body.access_token
+            : uuid();
+        body.access_token = token;
 
         // Persistimos la sesión en el BFF (BD real) para poder validarla
         // localmente en GET /api/auth/session sin re-consultar siempre a Auth.
