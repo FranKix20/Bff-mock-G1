@@ -1,0 +1,168 @@
+openapi: 3.0.3
+info:
+  title: BFF Grupo 1 - Mini Marketplace Cloud
+  description: >
+    Backend For Frontend que orquesta los servicios de Identidad (G2),
+    Catálogo (G3), Carro (G4), Pedidos (G5) y Notificaciones (G9).
+    Fase 3: incluye persistencia real (Supabase) y proxy con fallback
+    a mock cuando el servicio upstream no está disponible.
+  version: "2.0.0"
+servers:
+  - url: https://bff-mock-g1.vercel.app
+    description: Producción (Vercel)
+  - url: http://localhost:3001
+    description: Desarrollo local
+
+paths:
+  /health:
+    get:
+      summary: Estado del servicio
+      responses:
+        '200':
+          description: Servicio operativo
+
+  /api/auth/register:
+    post:
+      summary: Registrar nuevo usuario (proxy a Grupo 2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                full_name: { type: string }
+      responses:
+        '201': { description: Usuario creado }
+        '409': { description: Email ya registrado }
+
+  /api/auth/login:
+    post:
+      summary: Iniciar sesión (proxy a Grupo 2, persiste sesión en BFF)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Login exitoso, retorna access_token }
+        '400': { description: Datos faltantes }
+        '401': { description: Credenciales inválidas }
+
+  /api/auth/session:
+    get:
+      summary: Obtener sesión activa (validada contra persistencia del BFF)
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Sesión válida }
+        '401': { description: Sin token / sesión inválida o expirada }
+
+  /api/products:
+    get:
+      summary: Listar productos paginados (proxy a Grupo 3, cache de resiliencia)
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        '200': { description: Lista paginada de productos }
+
+  /api/products/{id}:
+    get:
+      summary: Obtener producto por ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Producto encontrado }
+        '404': { description: Producto no encontrado }
+
+  /api/cart/{userId}:
+    get:
+      summary: Obtener carrito del usuario (proxy a Grupo 4)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Carrito del usuario }
+
+  /api/checkout:
+    post:
+      summary: Procesar checkout (proxy a Grupos 4/5, idempotente)
+      description: >
+        Requiere el header Idempotency-Key. Si la misma key se reenvía,
+        se retorna la respuesta original persistida en vez de crear un
+        pedido duplicado.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+      responses:
+        '201': { description: Pedido creado (o reenvío idempotente) }
+        '400': { description: Falta userId o Idempotency-Key }
+
+  /api/orders/{orderId}:
+    get:
+      summary: Obtener pedido por ID (proxy a Grupo 5)
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Pedido encontrado }
+        '404': { description: Pedido no encontrado }
+
+  /api/notifications:
+    get:
+      summary: Listar notificaciones del usuario (proxy a Grupo 9)
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Lista paginada de notificaciones }
+        '400': { description: Falta userId }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        code: { type: string }
+        message: { type: string }
+        correlationId: { type: string }

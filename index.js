@@ -2,7 +2,10 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
+
+const { requestContext } = require('./middleware/context');
+const { logRequest, persistenceEnabled } = require('./lib/db');
+const { sendError } = require('./lib/errors');
 
 const app = express();
 
@@ -25,15 +28,29 @@ app.use(cors({
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-Id', 'X-Correlation-Id', 'X-Consumer']
 }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(requestContext);
 
 app.use((req, res, next) => {
     const timestamp = new Date().toISOString();
-    console.log('[' + timestamp + '] ' + req.method + ' ' + req.path);
+    console.log('[' + timestamp + '] ' + req.method + ' ' + req.path + ' (req:' + req.requestId + ')');
+
+    res.on('finish', () => {
+        logRequest({
+            request_id: req.requestId,
+            correlation_id: req.correlationId,
+            consumer: req.consumer,
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            created_at: new Date().toISOString()
+        }).catch(err => console.error('[log] Error registrando request:', err.message));
+    });
+
     next();
 });
 
@@ -43,14 +60,23 @@ app.get('/health', (req, res) => {
         service: 'BFF Grupo 1',
         timestamp: new Date().toISOString(),
         environment: process.env.NODE_ENV || 'development',
-        platform: 'Vercel'
+        platform: 'Vercel',
+        persistence: persistenceEnabled ? 'supabase' : 'in-memory (degraded)',
+        upstreams: {
+            auth: !!process.env.AUTH_SERVICE_URL,
+            products: !!process.env.PRODUCTS_SERVICE_URL,
+            cart: !!process.env.CART_SERVICE_URL,
+            checkout: !!process.env.CHECKOUT_SERVICE_URL,
+            orders: !!process.env.ORDERS_SERVICE_URL,
+            notifications: !!process.env.NOTIFICATIONS_SERVICE_URL
+        }
     });
 });
 
 app.get('/', (req, res) => {
     res.status(200).json({
         message: 'Bienvenido al BFF Grupo 1',
-        version: '1.0.0',
+        version: '2.0.0',
         environment: process.env.NODE_ENV || 'development',
         endpoints: {
             auth: '/api/auth',
@@ -62,67 +88,30 @@ app.get('/', (req, res) => {
             health: '/health'
         },
         links: {
-            docs: 'https://github.com/FranKix20/Bff-mock-G1'
+            docs: 'https://github.com/FranKix20/Bff-mock-G1',
+            openapi: '/docs/openapi.yaml'
         }
     });
 });
 
-try {
-    const authRoutes = require('./api/auth/routes');
-    app.use('/api/auth', authRoutes);
-    console.log('Rutas de Auth cargadas');
-} catch (err) {
-    console.warn('Rutas de Auth no encontradas:', err.message);
-}
+const mount = (path, modulePath, label) => {
+    try {
+        app.use(path, require(modulePath));
+        console.log(`Rutas de ${label} cargadas`);
+    } catch (err) {
+        console.warn(`Rutas de ${label} no encontradas:`, err.message);
+    }
+};
 
-try {
-    const productRoutes = require('./api/products/routes');
-    app.use('/api/products', productRoutes);
-    console.log('Rutas de Productos cargadas');
-} catch (err) {
-    console.warn('Rutas de Productos no encontradas:', err.message);
-}
-
-try {
-    const cartRoutes = require('./api/cart/routes');
-    app.use('/api/cart', cartRoutes);
-    console.log('Rutas de Carrito cargadas');
-} catch (err) {
-    console.warn('Rutas de Carrito no encontradas:', err.message);
-}
-
-try {
-    const checkoutRoutes = require('./api/checkout/routes');
-    app.use('/api/checkout', checkoutRoutes);
-    console.log('Rutas de Checkout cargadas');
-} catch (err) {
-    console.warn('Rutas de Checkout no encontradas:', err.message);
-}
-
-try {
-    const orderRoutes = require('./api/orders/routes');
-    app.use('/api/orders', orderRoutes);
-    console.log('Rutas de Ordenes cargadas');
-} catch (err) {
-    console.warn('Rutas de Ordenes no encontradas:', err.message);
-}
-
-try {
-    const notificationRoutes = require('./api/notifications/routes');
-    app.use('/api/notifications', notificationRoutes);
-    console.log('Rutas de Notificaciones cargadas');
-} catch (err) {
-    console.warn('Rutas de Notificaciones no encontradas:', err.message);
-}
+mount('/api/auth', './api/auth/routes', 'Auth');
+mount('/api/products', './api/products/routes', 'Productos');
+mount('/api/cart', './api/cart/routes', 'Carrito');
+mount('/api/checkout', './api/checkout/routes', 'Checkout');
+mount('/api/orders', './api/orders/routes', 'Ordenes');
+mount('/api/notifications', './api/notifications/routes', 'Notificaciones');
 
 app.use((req, res) => {
-    res.status(404).json({
-        error: 'Ruta no encontrada',
-        path: req.path,
-        method: req.method,
-        timestamp: new Date().toISOString(),
-        hint: 'Revisa la documentacion en GET /'
-    });
+    sendError(req, res, 404, 'ROUTE_NOT_FOUND', `Ruta no encontrada: ${req.method} ${req.path}`);
 });
 
 app.use((err, req, res, next) => {
@@ -130,22 +119,18 @@ app.use((err, req, res, next) => {
     console.error('Stack:', err.stack);
 
     const status = err.status || err.statusCode || 500;
-    const message = err.message || 'Error interno del servidor';
+    const code = err.code || 'INTERNAL_ERROR';
 
-    res.status(status).json({
-        error: message,
-        status: status,
-        timestamp: new Date().toISOString(),
-        ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-    });
+    sendError(req, res, status, code, err.message || 'Error interno del servidor');
 });
 
-if (process.env.VERCEL_ENV === undefined) {
+if (process.env.VERCEL_ENV === undefined && process.env.NODE_ENV !== 'test') {
     const PORT = process.env.PORT || 3001;
 
     const server = app.listen(PORT, () => {
         console.log('BFF Grupo 1 corriendo en http://localhost:' + PORT);
         console.log('Environment: ' + (process.env.NODE_ENV || 'development'));
+        console.log('Persistencia: ' + (persistenceEnabled ? 'Supabase conectado' : 'modo degradado (memoria local)'));
     });
 
     process.on('SIGTERM', () => {

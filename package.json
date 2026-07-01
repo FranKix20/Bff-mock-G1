@@ -1,19 +1,25 @@
 {
   "name": "bff-grupo1",
-  "version": "1.0.0",
-  "description": "BFF Grupo 1 - Mini Marketplace",
+  "version": "2.0.0",
+  "description": "BFF Grupo 1 - Mini Marketplace Cloud (Fase 3: cloud + persistencia)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "test": "jest --runInBand"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
     "axios": "^1.18.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
   }
 }
