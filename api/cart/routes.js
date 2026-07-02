@@ -30,6 +30,7 @@ router.get('/:userId', async (req, res, next) => {
             method: 'GET',
             path: `/cart/${req.params.userId}`,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => getMockCart(req.params.userId)
         });
         res.setHeader('X-Data-Source', result.source);
@@ -53,6 +54,7 @@ router.post('/:userId/items', async (req, res, next) => {
             path: `/cart/${req.params.userId}/items`,
             data: req.body,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => getMockCart(req.params.userId)
         });
         res.setHeader('X-Data-Source', result.source);
@@ -70,6 +72,7 @@ router.delete('/:userId/items/:productId', async (req, res, next) => {
             method: 'DELETE',
             path: `/cart/${req.params.userId}/items/${req.params.productId}`,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => getMockCart(req.params.userId, [])
         });
         res.setHeader('X-Data-Source', result.source);
