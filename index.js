@@ -68,7 +68,8 @@ app.get('/health', (req, res) => {
             cart: !!process.env.CART_SERVICE_URL,
             checkout: !!process.env.CHECKOUT_SERVICE_URL,
             orders: !!process.env.ORDERS_SERVICE_URL,
-            notifications: !!process.env.NOTIFICATIONS_SERVICE_URL
+            notifications: !!process.env.NOTIFICATIONS_SERVICE_URL,
+            chatbot: !!process.env.CHATBOT_SERVICE_URL
         }
     });
 });
@@ -85,6 +86,7 @@ app.get('/', (req, res) => {
             checkout: '/api/checkout',
             orders: '/api/orders',
             notifications: '/api/notifications',
+            chat: '/api/chat',
             health: '/health'
         },
         links: {
@@ -116,6 +118,7 @@ mount('/api/cart', require('./api/cart/routes'), 'Carrito');
 mount('/api/checkout', require('./api/checkout/routes'), 'Checkout');
 mount('/api/orders', require('./api/orders/routes'), 'Ordenes');
 mount('/api/notifications', require('./api/notifications/routes'), 'Notificaciones');
+mount('/api/chat', require('./api/chat/routes'), 'Chatbot');
 
 app.use((req, res) => {
     sendError(req, res, 404, 'ROUTE_NOT_FOUND', `Ruta no encontrada: ${req.method} ${req.path}`);
