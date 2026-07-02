@@ -33,6 +33,7 @@ router.get('/', async (req, res, next) => {
             path: '/orders',
             params: { userId: req.query.userId, page, size },
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({
                 data: [mockOrder],
                 pagination: { page, size, total: 1, totalPages: 1 }
@@ -53,6 +54,7 @@ router.get('/:orderId', async (req, res, next) => {
             method: 'GET',
             path: `/orders/${req.params.orderId}`,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => {
                 if (req.params.orderId === '999') return null;
                 return { ...mockOrder, orderId: req.params.orderId };
