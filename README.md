@@ -5,6 +5,7 @@
 Backend For Frontend desplegado en Vercel. Orquesta las llamadas entre el frontend y los servicios de los Grupos 2 (Auth), 3 (Catálogo), 4 (Carro/Checkout), 5 (Pedidos), 9 (Notificaciones) y 11 (Chatbot).
 
 **URL pública:** https://bff-mock-g1.vercel.app
+**URL Swagger:** https://app.swaggerhub.com/apis/utem-c81/bff-grupo-1-mini-marketplace-cloud/2.1.0#/default/get_health
 **Repositorio:** https://github.com/FranKix20/Bff-mock
 **Informe de pruebas de integración (evidencia Fase 3):** [`docs/Informe_Integracion_BFF_G1_Fase3.pdf`](./docs/Informe_Integracion_BFF_G1_Fase3.pdf)
 
