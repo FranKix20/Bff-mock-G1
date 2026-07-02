@@ -34,6 +34,7 @@ router.get('/', async (req, res, next) => {
             path: '/products',
             params: { page, size },
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => mockListPayload(page, size)
         });
 
@@ -71,6 +72,7 @@ router.get('/search', async (req, res, next) => {
             path: '/products/search',
             params: { q, page: req.query.page || 1, size: req.query.size || 20 },
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({ data: [mockProduct], pagination: { page: 1, size: 20, total: 1, totalPages: 1 } })
         });
 
@@ -89,6 +91,7 @@ router.get('/:id', async (req, res, next) => {
             method: 'GET',
             path: `/products/${req.params.id}`,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => {
                 if (req.params.id === '999') return null;
                 return { ...mockProduct, id: req.params.id };
