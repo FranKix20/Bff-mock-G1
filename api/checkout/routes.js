@@ -11,12 +11,19 @@ router.post('/', async (req, res, next) => {
     try {
         const { userId } = req.body;
         const idempotencyKey = req.headers['idempotency-key'];
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
         if (!userId) {
             return Errors.badRequest(req, res, 'El campo userId es requerido');
         }
         if (!idempotencyKey) {
             return Errors.badRequest(req, res, 'El header Idempotency-Key es requerido');
+        }
+        // El servicio de checkout del Grupo 4 guarda esta key en una columna
+        // uuid; si no valida el formato acá, el error llega como un 500 sin
+        // controlar en vez de un 400 de validación normal.
+        if (!uuidPattern.test(idempotencyKey)) {
+            return Errors.badRequest(req, res, 'El header Idempotency-Key debe ser un UUID válido');
         }
 
         const existing = await getIdempotentResponse(idempotencyKey);
