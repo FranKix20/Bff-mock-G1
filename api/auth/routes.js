@@ -29,6 +29,7 @@ router.post('/register', async (req, res, next) => {
             path: '/auth/register',
             data: req.body,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({
                 user: { ...mockUser, email: req.body.email, full_name: req.body.full_name || mockUser.full_name },
                 access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -61,6 +62,7 @@ router.post('/login', async (req, res, next) => {
             path: '/auth/login',
             data: req.body,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({
                 user: { ...mockUser, email: req.body.email },
                 access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -113,6 +115,7 @@ router.post('/refresh', async (req, res, next) => {
             path: '/auth/refresh',
             data: req.body,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({
                 access_token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...nuevo',
                 refresh_token: 'v1.NewRefresh...',
@@ -169,6 +172,7 @@ router.post('/logout', async (req, res, next) => {
             method: 'POST',
             path: '/auth/logout',
             headers: { 'Authorization': req.headers['authorization'] || '', 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({})
         });
         res.status(204).send();
