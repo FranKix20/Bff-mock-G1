@@ -3,10 +3,13 @@ info:
   title: BFF Grupo 1 - Mini Marketplace Cloud
   description: >
     Backend For Frontend que orquesta los servicios de Identidad (G2),
-    Catálogo (G3), Carro (G4), Pedidos (G5) y Notificaciones (G9).
-    Fase 3: incluye persistencia real (Supabase) y proxy con fallback
-    a mock cuando el servicio upstream no está disponible.
-  version: "2.0.0"
+    Catálogo (G3), Carro y Checkout (G4), Pedidos (G5), Notificaciones
+    (G9) y Chatbot (G11). Fase 3: incluye persistencia real (Supabase)
+    y proxy con fallback a mock cuando el servicio upstream no está
+    configurado o no responde. Cuando corresponde, el BFF normaliza el
+    contrato del upstream (casing, tipos de dato, paginación) a un
+    formato único en camelCase para el frontend.
+  version: "2.1.0"
 servers:
   - url: https://bff-mock-g1.vercel.app
     description: Producción (Vercel)
@@ -17,9 +20,40 @@ paths:
   /health:
     get:
       summary: Estado del servicio
+      description: >
+        Reporta el estado del BFF, el tipo de persistencia activa
+        (Supabase o memoria degradada) y qué integraciones tienen su
+        variable de entorno configurada.
       responses:
         '200':
           description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: UP }
+                  service: { type: string }
+                  timestamp: { type: string, format: date-time }
+                  environment: { type: string }
+                  platform: { type: string, example: Vercel }
+                  persistence: { type: string, enum: [supabase, "in-memory (degraded)"] }
+                  upstreams:
+                    type: object
+                    properties:
+                      auth: { type: boolean }
+                      products: { type: boolean }
+                      cart: { type: boolean }
+                      checkout: { type: boolean }
+                      orders: { type: boolean }
+                      notifications: { type: boolean }
+                      chatbot: { type: boolean }
+
+  /:
+    get:
+      summary: Información general del BFF
+      responses:
+        '200': { description: Mensaje de bienvenida y mapa de endpoints }
 
   /api/auth/register:
     post:
@@ -37,11 +71,12 @@ paths:
                 full_name: { type: string }
       responses:
         '201': { description: Usuario creado }
+        '400': { description: email y password son requeridos }
         '409': { description: Email ya registrado }
 
   /api/auth/login:
     post:
-      summary: Iniciar sesión (proxy a Grupo 2, persiste sesión en BFF)
+      summary: Iniciar sesión (proxy a Grupo 2, persiste sesión en el BFF)
       requestBody:
         required: true
         content:
@@ -53,9 +88,23 @@ paths:
                 email: { type: string }
                 password: { type: string }
       responses:
-        '200': { description: Login exitoso, retorna access_token }
+        '200': { description: Login exitoso, retorna access_token y refresh_token }
         '400': { description: Datos faltantes }
         '401': { description: Credenciales inválidas }
+
+  /api/auth/refresh:
+    post:
+      summary: Renovar token de acceso (proxy a Grupo 2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200': { description: Nuevo access_token y refresh_token }
 
   /api/auth/session:
     get:
@@ -66,9 +115,22 @@ paths:
         '200': { description: Sesión válida }
         '401': { description: Sin token / sesión inválida o expirada }
 
+  /api/auth/logout:
+    post:
+      summary: Cerrar sesión (proxy a Grupo 2)
+      security:
+        - bearerAuth: []
+      responses:
+        '204': { description: Sesión cerrada }
+
   /api/products:
     get:
-      summary: Listar productos paginados (proxy a Grupo 3, cache de resiliencia)
+      summary: Listar productos paginados (proxy a Grupo 3, normalizado a camelCase)
+      description: >
+        G3 responde internamente en snake_case (category_id, stock_visible,
+        image_url, is_active); el BFF normaliza a camelCase y unifica la
+        paginación. Usa cache de resiliencia (product_cache en Supabase)
+        si el upstream no responde.
       parameters:
         - name: page
           in: query
@@ -77,11 +139,11 @@ paths:
           in: query
           schema: { type: integer, default: 20 }
       responses:
-        '200': { description: Lista paginada de productos }
+        '200': { description: Lista paginada de productos (camelCase) }
 
   /api/products/{id}:
     get:
-      summary: Obtener producto por ID
+      summary: Obtener producto por ID (proxy a Grupo 3)
       parameters:
         - name: id
           in: path
@@ -90,6 +152,23 @@ paths:
       responses:
         '200': { description: Producto encontrado }
         '404': { description: Producto no encontrado }
+
+  /api/products/search:
+    get:
+      summary: Buscar productos por texto (proxy a Grupo 3)
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 10 }
+      responses:
+        '200': { description: Resultados paginados }
 
   /api/cart/{userId}:
     get:
@@ -102,13 +181,58 @@ paths:
       responses:
         '200': { description: Carrito del usuario }
 
+  /api/cart/{userId}/items:
+    post:
+      summary: Agregar producto al carrito (proxy a Grupo 4)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: string }
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        '201': { description: Ítem agregado, carrito actualizado }
+        '400': { description: productId y quantity (>=1) son requeridos }
+
+  /api/cart/{userId}/items/{productId}:
+    delete:
+      summary: Eliminar producto del carrito (proxy a Grupo 4)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Carrito actualizado sin el ítem eliminado }
+
   /api/checkout:
     post:
       summary: Procesar checkout (proxy a Grupos 4/5, idempotente)
       description: >
         Requiere el header Idempotency-Key. Si la misma key se reenvía,
-        se retorna la respuesta original persistida en vez de crear un
-        pedido duplicado.
+        se retorna la respuesta original persistida (tabla
+        idempotency_keys en Supabase) en vez de crear un pedido
+        duplicado, con el header X-Idempotent-Replay: true.
+
+
+        Nota de estado (Fase 3): el flujo de punta a punta contra
+        datos reales de G4/G5 está actualmente bloqueado por causas
+        ajenas al BFF (ver README, sección "Estado de las
+        integraciones"). El BFF propaga fielmente los errores del
+        upstream en formato estándar (UPSTREAM_ERROR).
       parameters:
         - name: Idempotency-Key
           in: header
@@ -126,17 +250,49 @@ paths:
       responses:
         '201': { description: Pedido creado (o reenvío idempotente) }
         '400': { description: Falta userId o Idempotency-Key }
+        '500':
+          description: Error propagado desde el servicio dependiente (UPSTREAM_ERROR)
+
+  /api/orders:
+    get:
+      summary: Listar pedidos del usuario (proxy a Grupo 5, normalizado a camelCase)
+      description: >
+        G5 responde el detalle en camelCase y el listado en snake_case,
+        además de devolver totalAmount como string en el listado y como
+        number en el detalle. El BFF normaliza ambos casos a un
+        contrato único.
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 10 }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+          description: Filtro opcional por estado del pedido (ej. STOCK_RESERVED)
+      responses:
+        '200': { description: Lista paginada de pedidos (camelCase, totalAmount numérico) }
 
   /api/orders/{orderId}:
     get:
       summary: Obtener pedido por ID (proxy a Grupo 5)
+      description: >
+        orderId corresponde al id (UUID interno) que usa Grupo 5 para
+        el detalle, no al orderNumber legible (formato "ORD-XXXX").
       parameters:
         - name: orderId
           in: path
           required: true
-          schema: { type: string }
+          schema: { type: string, format: uuid }
       responses:
-        '200': { description: Pedido encontrado }
+        '200': { description: Pedido encontrado (camelCase) }
         '404': { description: Pedido no encontrado }
 
   /api/notifications:
@@ -147,9 +303,103 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, default: 10 }
       responses:
-        '200': { description: Lista paginada de notificaciones }
+        '200': { description: Lista paginada de notificaciones, incluye unreadCount }
         '400': { description: Falta userId }
+
+  /api/notifications/{id}/read:
+    patch:
+      summary: Marcar notificación como leída (proxy a Grupo 9)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Notificación actualizada }
+        '404': { description: Notificación no encontrada }
+
+  /api/notifications/subscriptions:
+    post:
+      summary: Crear suscripción a notificaciones (proxy a Grupo 9)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, types, channel]
+              properties:
+                userId: { type: string }
+                types: { type: array, items: { type: string } }
+                channel: { type: string }
+      responses:
+        '201': { description: Suscripción creada }
+        '400': { description: userId, types y channel son requeridos }
+
+  /api/chat:
+    post:
+      summary: Enviar mensaje al chatbot (proxy a Grupo 11, normalizado a camelCase)
+      description: >
+        G11 responde y espera snake_case en su código real (session_id,
+        intent_detected, sources_consulted), aunque su contrato openapi
+        documente camelCase. El BFF normaliza siempre a camelCase.
+        Requiere el header X-Api-Key hacia el upstream (configurado vía
+        CHATBOT_API_KEY), no expuesto al cliente del BFF.
+
+
+        Nota de estado (Fase 3): la conversación general y las FAQ
+        funcionan correctamente. Las consultas de estado de pedido
+        (intent order_status) fallan con 503 porque G11 no logra
+        resolver el pedido contra Grupo 5 (bug de integración ajeno al
+        BFF, ver README).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, message]
+              properties:
+                sessionId: { type: string, format: uuid }
+                message: { type: string }
+                userId: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Respuesta del chatbot (camelCase)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId: { type: string }
+                  response: { type: string }
+                  intentDetected: { type: string }
+                  sourcesConsulted: { type: array, items: { type: string } }
+                  correlationId: { type: string, nullable: true }
+                  timestamp: { type: string, format: date-time }
+        '400': { description: sessionId o message faltante/ inválido }
+        '503': { description: Servicio externo no disponible (propagado desde G11) }
+
+  /api/chat/faq/{category}:
+    get:
+      summary: Obtener preguntas frecuentes por categoría (proxy a Grupo 11)
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [faq_envios, faq_pagos, faq_productos, faq_cuenta, faq_devoluciones]
+      responses:
+        '200': { description: Lista de preguntas frecuentes de la categoría }
+        '400': { description: Categoría no válida }
 
 components:
   securitySchemes:
