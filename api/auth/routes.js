@@ -83,9 +83,14 @@ router.post('/login', async (req, res, next) => {
 
         // Persistimos la sesión en el BFF (BD real) para poder validarla
         // localmente en GET /api/auth/session sin re-consultar siempre a Auth.
+        // G2 documenta dos identificadores por usuario: user_id (UUID interno
+        // de Supabase Auth) y business_user_id (formato "USR-01", que es el
+        // que usan G4/Carro, G5/Pedidos y G9/Notificaciones). Guardamos ambos
+        // para poder pasarle el business_user_id correcto a esos servicios.
         await saveSession({
             token,
             user_id: body.user?.user_id || mockUser.user_id,
+            business_user_id: body.user?.business_user_id || null,
             email: body.user?.email || req.body.email,
             full_name: body.user?.full_name || mockUser.full_name,
             role: body.user?.role || 'customer',
@@ -142,6 +147,7 @@ router.get('/session', async (req, res, next) => {
         res.status(200).json({
             user: {
                 user_id: session.user_id,
+                business_user_id: session.business_user_id,
                 email: session.email,
                 full_name: session.full_name,
                 role: session.role,
