@@ -41,6 +41,7 @@ router.post('/', async (req, res, next) => {
                 'Idempotency-Key': idempotencyKey,
                 'X-Correlation-Id': req.correlationId
             },
+            req,
             mockFallback: () => ({
                 orderId: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
                 userId,
