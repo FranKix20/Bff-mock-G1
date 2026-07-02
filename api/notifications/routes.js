@@ -50,6 +50,7 @@ router.get('/', async (req, res, next) => {
             path: '/notifications',
             params: { userId, page, size },
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => {
                 const filtered = mockNotifications.filter(n => n.userId === userId);
                 return { data: filtered, pagination: { page, size, total: filtered.length, totalPages: 1 } };
@@ -71,6 +72,7 @@ router.patch('/:id/read', async (req, res, next) => {
             method: 'PATCH',
             path: `/notifications/${req.params.id}/read`,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => {
                 const notification = mockNotifications.find(n => n.id === req.params.id);
                 if (!notification) return null;
@@ -103,6 +105,7 @@ router.post('/subscriptions', async (req, res, next) => {
             path: '/notifications/subscriptions',
             data: req.body,
             headers: { 'X-Correlation-Id': req.correlationId },
+            req,
             mockFallback: () => ({
                 subscriptionId: 'sub-' + Math.random().toString(36).substr(2, 8),
                 userId,
