@@ -125,6 +125,20 @@ app.use((err, req, res, next) => {
     console.error('Error:', err.message);
     console.error('Stack:', err.stack);
 
+    if (err.isUpstreamError) {
+        // Error real devuelto por un servicio upstream (no una falla de
+        // conectividad). Se propaga el status real, normalizando el
+        // mensaje al formato estándar del ecosistema aunque el upstream
+        // use un shape distinto (ej. { detail: "..." } en vez de
+        // { message: "..." }).
+        const upstreamBody = err.upstreamData;
+        const message =
+            (upstreamBody && (upstreamBody.message || upstreamBody.detail)) ||
+            (typeof upstreamBody === 'string' ? upstreamBody : null) ||
+            'El servicio dependiente rechazó la solicitud';
+        return sendError(req, res, err.upstreamStatus, 'UPSTREAM_ERROR', message);
+    }
+
     const status = err.status || err.statusCode || 500;
     const code = err.code || 'INTERNAL_ERROR';
 
