@@ -6,6 +6,7 @@
 create table if not exists sessions (
     token text primary key,
     user_id text not null,
+    business_user_id text,
     email text,
     full_name text,
     role text,
