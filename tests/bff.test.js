@@ -1,5 +1,6 @@
 const request = require('supertest');
 const app = require('../index');
+const { randomUUID } = require('crypto');
 
 describe('Health & routing', () => {
     test('GET /health responde 200 con estado UP', async () => {
@@ -55,7 +56,7 @@ describe('Products', () => {
 
 describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
     test('Dos POST /api/checkout con la misma Idempotency-Key no crean pedidos duplicados', async () => {
-        const idempotencyKey = 'test-key-' + Date.now();
+        const idempotencyKey = randomUUID();
         const payload = { userId: 'USR-TEST-01' };
 
         const first = await request(app)
