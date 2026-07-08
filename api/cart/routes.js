@@ -29,7 +29,10 @@ router.get('/:userId', async (req, res, next) => {
             envVarName: 'CART_SERVICE_URL',
             method: 'GET',
             path: `/cart/${req.params.userId}`,
-            headers: { 'X-Correlation-Id': req.correlationId },
+            headers: {
+                'X-Correlation-Id': req.correlationId,
+                ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
+            },
             req,
             mockFallback: () => getMockCart(req.params.userId)
         });
@@ -53,7 +56,10 @@ router.post('/:userId/items', async (req, res, next) => {
             method: 'POST',
             path: `/cart/${req.params.userId}/items`,
             data: req.body,
-            headers: { 'X-Correlation-Id': req.correlationId },
+            headers: {
+                'X-Correlation-Id': req.correlationId,
+                ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
+            },
             req,
             mockFallback: () => getMockCart(req.params.userId)
         });
@@ -71,7 +77,10 @@ router.delete('/:userId/items/:productId', async (req, res, next) => {
             envVarName: 'CART_SERVICE_URL',
             method: 'DELETE',
             path: `/cart/${req.params.userId}/items/${req.params.productId}`,
-            headers: { 'X-Correlation-Id': req.correlationId },
+            headers: {
+                'X-Correlation-Id': req.correlationId,
+                ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
+            },
             req,
             mockFallback: () => getMockCart(req.params.userId, [])
         });
