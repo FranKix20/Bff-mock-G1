@@ -41,6 +41,14 @@ router.post('/', async (req, res, next) => {
                 'Idempotency-Key': idempotencyKey,
                 'X-Correlation-Id': req.correlationId
             },
+            // El checkout de G4 encadena una validación con G5 (y esta,
+            // desde que se conectó con G7, probablemente otra llamada más
+            // para reconciliar inventario). El timeout default de proxy.js
+            // (4s) es insuficiente para esa cadena completa, sobre todo si
+            // alguno de los servicios está recién despertando en Render, y
+            // provocaba una caída silenciosa a mock-fallback aunque el
+            // upstream real hubiera respondido bien un segundo más tarde.
+            timeout: 15000,
             req,
             mockFallback: () => ({
                 orderId: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
