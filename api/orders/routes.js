@@ -100,7 +100,7 @@ router.get('/', async (req, res, next) => {
             envVarName: 'ORDERS_SERVICE_URL',
             method: 'GET',
             path: '/orders',
-            params: { userId: req.query.userId, page, size, status: req.query.status },
+            params: { userId: req.query.userId, page, limit: size, status: req.query.status },
             headers: { 'X-Correlation-Id': req.correlationId },
             req,
             mockFallback: () => ({
