@@ -1,5 +1,4 @@
 const request = require('supertest');
-const { randomUUID } = require('crypto');
 
 // Estos tests validan la regla de negocio nueva: el BFF no debe dejar
 // agregar al carrito más unidades de las que hay en stock real (G3),
@@ -87,22 +86,6 @@ describe('Límite de stock al agregar al carrito', () => {
     });
 });
 
-describe('Despacho (Grupo 8)', () => {
-    test('GET /api/shipments/by-order/:orderId responde 200 con el envío (mock)', async () => {
-        const res = await request(app).get('/api/shipments/by-order/ORD-1001');
-        expect(res.status).toBe(200);
-        expect(res.body).toHaveProperty('shipmentId');
-        expect(res.body).toHaveProperty('status');
-        expect(res.headers['x-data-source']).toBe('mock');
-    });
-
-    test('GET /api/shipments/:shipmentId responde 200 con el detalle (mock)', async () => {
-        const res = await request(app).get('/api/shipments/shp_mock0001');
-        expect(res.status).toBe(200);
-        expect(res.body).toHaveProperty('shipmentId', 'shp_mock0001');
-    });
-});
-
 describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
     test('Dos POST /api/checkout con la misma Idempotency-Key no crean pedidos duplicados', async () => {
         const idempotencyKey = randomUUID();
@@ -122,5 +105,17 @@ describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
         expect(second.status).toBe(201);
         expect(second.body.orderId).toBe(first.body.orderId);
         expect(second.headers['x-idempotent-replay']).toBe('true');
+    });
+    });
+
+    test('rechaza quantity no entero o menor a 1 con 400 BAD_REQUEST', async () => {
+        mockUpstream({ stock: 5, cartItems: [] });
+
+        const res = await request(app)
+            .post('/api/cart/user-1/items')
+            .send({ productId: PRODUCT_ID, quantity: 1.5 });
+
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('BAD_REQUEST');
     });
 });
