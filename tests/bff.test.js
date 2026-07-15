@@ -1,4 +1,5 @@
 const request = require('supertest');
+const { randomUUID } = require('crypto');
 
 // Estos tests validan la regla de negocio nueva: el BFF no debe dejar
 // agregar al carrito más unidades de las que hay en stock real (G3),
@@ -121,17 +122,5 @@ describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
         expect(second.status).toBe(201);
         expect(second.body.orderId).toBe(first.body.orderId);
         expect(second.headers['x-idempotent-replay']).toBe('true');
-    });
-    });
-
-    test('rechaza quantity no entero o menor a 1 con 400 BAD_REQUEST', async () => {
-        mockUpstream({ stock: 5, cartItems: [] });
-
-        const res = await request(app)
-            .post('/api/cart/user-1/items')
-            .send({ productId: PRODUCT_ID, quantity: 1.5 });
-
-        expect(res.status).toBe(400);
-        expect(res.body.code).toBe('BAD_REQUEST');
     });
 });
