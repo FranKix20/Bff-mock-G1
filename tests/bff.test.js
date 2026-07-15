@@ -81,3 +81,22 @@ describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
         expect(res.status).toBe(400);
     });
 });
+
+describe('Carrito - tope de stock', () => {
+    test('POST /api/cart/:userId/items sin productId o quantity responde 400', async () => {
+        const res = await request(app).post('/api/cart/USR-TEST-01/items').send({});
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('BAD_REQUEST');
+    });
+
+    test('POST /api/cart/:userId/items agrega normalmente cuando el stock no se pudo verificar (modo degradado)', async () => {
+        // Sin PRODUCTS_SERVICE_URL/CART_SERVICE_URL configuradas (entorno de
+        // test), el guard de stock no puede confirmar el límite real y debe
+        // dejar pasar la operación en vez de bloquear una compra válida.
+        const res = await request(app)
+            .post('/api/cart/USR-TEST-01/items')
+            .send({ productId: '550e8400-e29b-41d4-a716-446655440000', quantity: 2 });
+        expect(res.status).toBe(201);
+        expect(res.body).toHaveProperty('items');
+    });
+});
