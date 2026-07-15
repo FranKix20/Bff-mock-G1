@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
+const { enrichCartItemNames } = require('../../lib/cartNormalize');
 
 const getMockCart = (userId, items = null) => ({
     id: '990e8400-e29b-41d4-a716-446655440444',
@@ -21,71 +22,6 @@ const getMockCart = (userId, items = null) => ({
     createdAt: '2026-06-15T14:30:00Z',
     updatedAt: new Date().toISOString()
 });
-
-// G4 (Carrito) no siempre incluye el nombre ni la imagen del producto en
-// cada item — solo trae productId. Cuando falta, el frontend mostraba el
-// UUID crudo en vez de un nombre legible (y un emoji en vez de la foto real),
-// lo que además rompía el layout en móvil (un UUID es una sola palabra larga
-// sin espacios). Acá se normaliza la convención que use G4 (name / product_name
-// / productName, image_url / productImage) y, si de plano no viene, se
-// resuelve contra el catálogo real (G3) antes de responder al frontend, para
-// no depender de que G4 lo agregue algún día.
-async function enrichCartItemNames(cart, req) {
-    if (!cart || !Array.isArray(cart.items)) return cart;
-
-    const items = cart.items.map((item) => ({
-        ...item,
-        productName: item.productName ?? item.product_name ?? item.name ?? null,
-        productImage: item.productImage ?? item.image_url ?? item.imageUrl ?? null
-    }));
-
-    const missingIds = [...new Set(
-        items
-            .filter((item) => (!item.productName || !item.productImage) && item.productId)
-            .map((item) => item.productId)
-    )];
-
-    if (missingIds.length === 0) {
-        return { ...cart, items };
-    }
-
-    const lookups = await Promise.all(
-        missingIds.map(async (id) => {
-            try {
-                const result = await callUpstream({
-                    envVarName: 'PRODUCTS_SERVICE_URL',
-                    method: 'GET',
-                    path: `/products/${id}`,
-                    headers: { 'X-Correlation-Id': req.correlationId },
-                    req,
-                    mockFallback: () => null
-                });
-                const name = result?.data?.name ?? result?.data?.product_name ?? null;
-                const image = result?.data?.image_url ?? result?.data?.imageUrl ?? null;
-                return [id, { name, image }];
-            } catch {
-                // Si el catálogo no responde (o el producto ya no existe), se
-                // deja sin nombre/imagen y el frontend cae a su propio fallback
-                // visual, en vez de tumbar la carga completa del carrito por esto.
-                return [id, { name: null, image: null }];
-            }
-        })
-    );
-    const dataById = Object.fromEntries(lookups);
-
-    return {
-        ...cart,
-        items: items.map((item) => {
-            const found = dataById[item.productId];
-            if (!found) return item;
-            return {
-                ...item,
-                productName: item.productName ?? found.name,
-                productImage: item.productImage ?? found.image
-            };
-        })
-    };
-}
 
 // GET /api/cart/:userId
 router.get('/:userId', async (req, res, next) => {
@@ -138,9 +74,18 @@ router.post('/:userId/items', async (req, res, next) => {
 });
 
 // DELETE /api/cart/:userId/items/:productId
+//
+// El paquete de integración de G4 (E5) confirma que este endpoint
+// responde 204 sin body cuando elimina bien el item — no un carrito
+// actualizado como asumía el mock original. Si se le pasaba ese body
+// vacío directo a enrichCartItemNames() y se reenviaba tal cual, el
+// frontend recibía un JSON vacío en vez del carrito, y la UI del
+// carrito se quedaba pegada en el estado anterior o rompía. Por eso acá,
+// cuando el upstream real confirma el 204, se pide el carrito actualizado
+// con un GET aparte antes de responder.
 router.delete('/:userId/items/:productId', async (req, res, next) => {
     try {
-        const result = await callUpstream({
+        const deleteResult = await callUpstream({
             envVarName: 'CART_SERVICE_URL',
             method: 'DELETE',
             path: `/cart/${req.params.userId}/items/${req.params.productId}`,
@@ -149,10 +94,31 @@ router.delete('/:userId/items/:productId', async (req, res, next) => {
                 ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
             },
             req,
+            mockFallback: () => null // marcador: el mock arma la respuesta más abajo
+        });
+
+        res.setHeader('X-Data-Source', deleteResult.source);
+
+        if (deleteResult.source !== 'upstream') {
+            return res.status(200).json(getMockCart(req.params.userId, []));
+        }
+
+        // Upstream real: el DELETE ya se aplicó (204). Se pide el carrito
+        // actualizado en un segundo request para devolverle al frontend
+        // el estado real, no un eco vacío.
+        const freshCart = await callUpstream({
+            envVarName: 'CART_SERVICE_URL',
+            method: 'GET',
+            path: `/cart/${req.params.userId}`,
+            headers: {
+                'X-Correlation-Id': req.correlationId,
+                ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
+            },
+            req,
             mockFallback: () => getMockCart(req.params.userId, [])
         });
-        res.setHeader('X-Data-Source', result.source);
-        const body = result.source === 'upstream' ? await enrichCartItemNames(result.data, req) : result.data;
+
+        const body = await enrichCartItemNames(freshCart.data, req);
         res.status(200).json(body);
     } catch (err) {
         next(err);
