@@ -122,4 +122,38 @@ router.get('/faq/:category', async (req, res, next) => {
     }
 });
 
+// GET /api/chat/health
+// El widget del frontend (botón de la tuerca) usa esta ruta para mostrar el
+// estado de las dependencias del chatbot (Gemini, Supabase, etc). Antes no
+// existía, así que el frontend caía siempre a su fallback de llamar directo
+// a Render desde el navegador (lo que además exige que Render tenga CORS
+// habilitado para el dominio del frontend). Proxyando acá, pasa por el mismo
+// camino que el resto de las rutas y no depende del CORS de un tercero.
+router.get('/health', async (req, res, next) => {
+    try {
+        const apiKey = process.env.CHATBOT_API_KEY;
+
+        const result = await callUpstream({
+            envVarName: 'CHATBOT_SERVICE_URL',
+            method: 'GET',
+            path: '/health',
+            headers: {
+                'X-Correlation-Id': req.correlationId,
+                ...(apiKey ? { 'X-Api-Key': apiKey } : {})
+            },
+            req,
+            mockFallback: () => ({
+                status: 'error',
+                version: null,
+                dependencies: {}
+            })
+        });
+
+        res.setHeader('X-Data-Source', result.source);
+        res.status(200).json(result.data);
+    } catch (err) {
+        next(err);
+    }
+});
+
 module.exports = router;
