@@ -4,6 +4,7 @@ const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
 const { enrichCartItemNames } = require('../../lib/cartNormalize');
 const { checkStockForAdd } = require('../../lib/stockGuard');
+
 const getMockCart = (userId, items = null) => ({
     id: '990e8400-e29b-41d4-a716-446655440444',
     userId,
