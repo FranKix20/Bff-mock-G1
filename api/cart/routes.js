@@ -22,23 +22,27 @@ const getMockCart = (userId, items = null) => ({
     updatedAt: new Date().toISOString()
 });
 
-// G4 (Carrito) no siempre incluye el nombre del producto en cada item —
-// solo trae productId. Cuando falta, el frontend mostraba el UUID crudo en
-// vez de un nombre legible, lo que además rompía el layout en móvil (un
-// UUID es una sola palabra larga sin espacios). Acá se normaliza la
-// convención de nombre que use G4 (name / product_name / productName) y,
-// si de plano no viene, se resuelve contra el catálogo real (G3) antes de
-// responder al frontend, para no depender de que G4 lo agregue algún día.
+// G4 (Carrito) no siempre incluye el nombre ni la imagen del producto en
+// cada item — solo trae productId. Cuando falta, el frontend mostraba el
+// UUID crudo en vez de un nombre legible (y un emoji en vez de la foto real),
+// lo que además rompía el layout en móvil (un UUID es una sola palabra larga
+// sin espacios). Acá se normaliza la convención que use G4 (name / product_name
+// / productName, image_url / productImage) y, si de plano no viene, se
+// resuelve contra el catálogo real (G3) antes de responder al frontend, para
+// no depender de que G4 lo agregue algún día.
 async function enrichCartItemNames(cart, req) {
     if (!cart || !Array.isArray(cart.items)) return cart;
 
     const items = cart.items.map((item) => ({
         ...item,
-        productName: item.productName ?? item.product_name ?? item.name ?? null
+        productName: item.productName ?? item.product_name ?? item.name ?? null,
+        productImage: item.productImage ?? item.image_url ?? item.imageUrl ?? null
     }));
 
     const missingIds = [...new Set(
-        items.filter((item) => !item.productName && item.productId).map((item) => item.productId)
+        items
+            .filter((item) => (!item.productName || !item.productImage) && item.productId)
+            .map((item) => item.productId)
     )];
 
     if (missingIds.length === 0) {
@@ -57,22 +61,29 @@ async function enrichCartItemNames(cart, req) {
                     mockFallback: () => null
                 });
                 const name = result?.data?.name ?? result?.data?.product_name ?? null;
-                return [id, name];
+                const image = result?.data?.image_url ?? result?.data?.imageUrl ?? null;
+                return [id, { name, image }];
             } catch {
                 // Si el catálogo no responde (o el producto ya no existe), se
-                // deja sin nombre y el frontend cae a su propio fallback visual,
-                // en vez de tumbar la carga completa del carrito por esto.
-                return [id, null];
+                // deja sin nombre/imagen y el frontend cae a su propio fallback
+                // visual, en vez de tumbar la carga completa del carrito por esto.
+                return [id, { name: null, image: null }];
             }
         })
     );
-    const nameById = Object.fromEntries(lookups);
+    const dataById = Object.fromEntries(lookups);
 
     return {
         ...cart,
-        items: items.map((item) =>
-            item.productName ? item : { ...item, productName: nameById[item.productId] ?? item.productName }
-        )
+        items: items.map((item) => {
+            const found = dataById[item.productId];
+            if (!found) return item;
+            return {
+                ...item,
+                productName: item.productName ?? found.name,
+                productImage: item.productImage ?? found.image
+            };
+        })
     };
 }
 
