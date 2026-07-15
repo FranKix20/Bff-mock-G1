@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
-const { enrichCartItemNames } = require('../../lib/cartNormalize');
+const { enrichCartItemNames, getProductStock } = require('../../lib/cartNormalize');
 
 const getMockCart = (userId, items = null) => ({
     id: '990e8400-e29b-41d4-a716-446655440444',
@@ -49,8 +49,47 @@ router.get('/:userId', async (req, res, next) => {
 router.post('/:userId/items', async (req, res, next) => {
     try {
         const { productId, quantity } = req.body;
-        if (!productId || !quantity || quantity < 1) {
-            return Errors.badRequest(req, res, 'productId y quantity (>=1) son requeridos');
+        if (!productId || typeof productId !== 'string') {
+            return Errors.badRequest(req, res, 'productId es requerido');
+        }
+        if (!Number.isInteger(quantity) || quantity < 1) {
+            return Errors.badRequest(req, res, 'quantity debe ser un entero mayor o igual a 1');
+        }
+
+        // Nunca confiamos solo en lo que envía el frontend: la fuente de
+        // verdad del stock es el catálogo (G3). Se valida acá, en el
+        // servidor, porque el checkout de G4 ya demostró (ver Fase 3) que
+        // no siempre valida bien sus propios datos antes de aceptar una
+        // operación. Si el lookup de stock falla (G3 caído), se deja pasar
+        // el request en vez de bloquear al usuario por un problema nuestro
+        // de resiliencia — el upstream (G4) sigue siendo el guardián final.
+        const stock = await getProductStock(productId, req);
+        if (stock !== null) {
+            const existingCart = await callUpstream({
+                envVarName: 'CART_SERVICE_URL',
+                method: 'GET',
+                path: `/cart/${req.params.userId}`,
+                headers: {
+                    'X-Correlation-Id': req.correlationId,
+                    ...(req.headers['authorization'] ? { 'Authorization': req.headers['authorization'] } : {})
+                },
+                req,
+                mockFallback: () => ({ items: [] })
+            });
+            const currentQty = (existingCart.data?.items || [])
+                .filter((i) => (i.productId ?? i.product_id) === productId)
+                .reduce((sum, i) => sum + (i.quantity || 0), 0);
+
+            if (currentQty + quantity > stock) {
+                const remaining = Math.max(0, stock - currentQty);
+                return Errors.insufficientStock(
+                    req,
+                    res,
+                    remaining > 0
+                        ? `Solo quedan ${remaining} unidades disponibles de este producto`
+                        : 'No hay stock disponible para este producto'
+                );
+            }
         }
 
         const result = await callUpstream({
