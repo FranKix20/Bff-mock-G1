@@ -69,7 +69,8 @@ app.get('/health', (req, res) => {
             checkout: !!process.env.CHECKOUT_SERVICE_URL,
             orders: !!process.env.ORDERS_SERVICE_URL,
             notifications: !!process.env.NOTIFICATIONS_SERVICE_URL,
-            chatbot: !!process.env.CHATBOT_SERVICE_URL
+            chatbot: !!process.env.CHATBOT_SERVICE_URL,
+            reports: !!process.env.REPORTS_SERVICE_URL
         }
     });
 });
@@ -87,6 +88,7 @@ app.get('/', (req, res) => {
             orders: '/api/orders',
             notifications: '/api/notifications',
             chat: '/api/chat',
+            reports: '/api/reports',
             health: '/health'
         },
         links: {
@@ -95,7 +97,6 @@ app.get('/', (req, res) => {
         }
     });
 });
-
 // IMPORTANTE: los require() deben usar un string literal directo en el
 // call site (no una variable) para que el empaquetador de Vercel
 // (Node File Trace) pueda detectar estáticamente estos archivos e
