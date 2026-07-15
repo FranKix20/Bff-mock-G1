@@ -3,6 +3,7 @@ const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
 const { enrichCartItemNames } = require('../../lib/cartNormalize');
+const { checkStockForAdd } = require('../../lib/stockGuard');
 
 const getMockCart = (userId, items = null) => ({
     id: '990e8400-e29b-41d4-a716-446655440444',
@@ -51,6 +52,16 @@ router.post('/:userId/items', async (req, res, next) => {
         const { productId, quantity } = req.body;
         if (!productId || !quantity || quantity < 1) {
             return Errors.badRequest(req, res, 'productId y quantity (>=1) son requeridos');
+        }
+
+        const stockCheck = await checkStockForAdd({ userId: req.params.userId, productId, quantity, req });
+        if (!stockCheck.ok) {
+            return Errors.stockExceeded(
+                req,
+                res,
+                `Solo quedan ${stockCheck.available} unidades disponibles` +
+                    (stockCheck.inCart > 0 ? ` (ya tienes ${stockCheck.inCart} en tu carrito).` : '.')
+            );
         }
 
         const result = await callUpstream({
