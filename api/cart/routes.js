@@ -22,6 +22,60 @@ const getMockCart = (userId, items = null) => ({
     updatedAt: new Date().toISOString()
 });
 
+// G4 (Carrito) no siempre incluye el nombre del producto en cada item —
+// solo trae productId. Cuando falta, el frontend mostraba el UUID crudo en
+// vez de un nombre legible, lo que además rompía el layout en móvil (un
+// UUID es una sola palabra larga sin espacios). Acá se normaliza la
+// convención de nombre que use G4 (name / product_name / productName) y,
+// si de plano no viene, se resuelve contra el catálogo real (G3) antes de
+// responder al frontend, para no depender de que G4 lo agregue algún día.
+async function enrichCartItemNames(cart, req) {
+    if (!cart || !Array.isArray(cart.items)) return cart;
+
+    const items = cart.items.map((item) => ({
+        ...item,
+        productName: item.productName ?? item.product_name ?? item.name ?? null
+    }));
+
+    const missingIds = [...new Set(
+        items.filter((item) => !item.productName && item.productId).map((item) => item.productId)
+    )];
+
+    if (missingIds.length === 0) {
+        return { ...cart, items };
+    }
+
+    const lookups = await Promise.all(
+        missingIds.map(async (id) => {
+            try {
+                const result = await callUpstream({
+                    envVarName: 'PRODUCTS_SERVICE_URL',
+                    method: 'GET',
+                    path: `/products/${id}`,
+                    headers: { 'X-Correlation-Id': req.correlationId },
+                    req,
+                    mockFallback: () => null
+                });
+                const name = result?.data?.name ?? result?.data?.product_name ?? null;
+                return [id, name];
+            } catch {
+                // Si el catálogo no responde (o el producto ya no existe), se
+                // deja sin nombre y el frontend cae a su propio fallback visual,
+                // en vez de tumbar la carga completa del carrito por esto.
+                return [id, null];
+            }
+        })
+    );
+    const nameById = Object.fromEntries(lookups);
+
+    return {
+        ...cart,
+        items: items.map((item) =>
+            item.productName ? item : { ...item, productName: nameById[item.productId] ?? item.productName }
+        )
+    };
+}
+
 // GET /api/cart/:userId
 router.get('/:userId', async (req, res, next) => {
     try {
@@ -37,7 +91,8 @@ router.get('/:userId', async (req, res, next) => {
             mockFallback: () => getMockCart(req.params.userId)
         });
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        const body = result.source === 'upstream' ? await enrichCartItemNames(result.data, req) : result.data;
+        res.status(200).json(body);
     } catch (err) {
         next(err);
     }
@@ -64,7 +119,8 @@ router.post('/:userId/items', async (req, res, next) => {
             mockFallback: () => getMockCart(req.params.userId)
         });
         res.setHeader('X-Data-Source', result.source);
-        res.status(201).json(result.data);
+        const body = result.source === 'upstream' ? await enrichCartItemNames(result.data, req) : result.data;
+        res.status(201).json(body);
     } catch (err) {
         next(err);
     }
@@ -85,7 +141,8 @@ router.delete('/:userId/items/:productId', async (req, res, next) => {
             mockFallback: () => getMockCart(req.params.userId, [])
         });
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        const body = result.source === 'upstream' ? await enrichCartItemNames(result.data, req) : result.data;
+        res.status(200).json(body);
     } catch (err) {
         next(err);
     }
