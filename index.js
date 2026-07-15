@@ -119,6 +119,7 @@ mount('/api/checkout', require('./api/checkout/routes'), 'Checkout');
 mount('/api/orders', require('./api/orders/routes'), 'Ordenes');
 mount('/api/notifications', require('./api/notifications/routes'), 'Notificaciones');
 mount('/api/chat', require('./api/chat/routes'), 'Chatbot');
+mount('/api/shipments', require('./api/shipments/routes'), 'Despacho');
 
 app.use((req, res) => {
     sendError(req, res, 404, 'ROUTE_NOT_FOUND', `Ruta no encontrada: ${req.method} ${req.path}`);

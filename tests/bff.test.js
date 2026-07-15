@@ -54,6 +54,22 @@ describe('Products', () => {
     });
 });
 
+describe('Despacho (Grupo 8)', () => {
+    test('GET /api/shipments/by-order/:orderId responde 200 con el envío (mock)', async () => {
+        const res = await request(app).get('/api/shipments/by-order/ORD-1001');
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('shipmentId');
+        expect(res.body).toHaveProperty('status');
+        expect(res.headers['x-data-source']).toBe('mock');
+    });
+
+    test('GET /api/shipments/:shipmentId responde 200 con el detalle (mock)', async () => {
+        const res = await request(app).get('/api/shipments/shp_mock0001');
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('shipmentId', 'shp_mock0001');
+    });
+});
+
 describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
     test('Dos POST /api/checkout con la misma Idempotency-Key no crean pedidos duplicados', async () => {
         const idempotencyKey = randomUUID();
