@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
+const { resolveProductInfo } = require('../../lib/productLookup');
 
 const mockOrder = {
     orderId: 'ORD-1001',
@@ -45,9 +46,40 @@ function normalizeOrderItem(item) {
         id: item.id,
         productId: item.product_id ?? item.productId,
         productName: item.product_name ?? item.productName ?? null,
+        productImage: item.product_image ?? item.productImage ?? null,
         quantity: item.quantity,
         unitPrice: toNumber(item.unit_price ?? item.unitPrice),
         subtotal: toNumber(item.subtotal)
+    };
+}
+
+/**
+ * G5 tampoco expone imagen del producto y, según el pedido, a veces ni
+ * siquiera el nombre — igual que pasaba con el carrito de G4. Se
+ * completa contra el catálogo real (G3) reutilizando el mismo helper que
+ * ya usa /api/cart, así un pedido no le muestra al usuario un UUID en
+ * vez del nombre del producto que compró.
+ */
+async function enrichOrderItems(order, req) {
+    if (!order || !Array.isArray(order.items)) return order;
+    const missingIds = order.items
+        .filter((item) => (!item.productName || !item.productImage) && item.productId)
+        .map((item) => item.productId);
+
+    const dataById = await resolveProductInfo(missingIds, req);
+    if (Object.keys(dataById).length === 0) return order;
+
+    return {
+        ...order,
+        items: order.items.map((item) => {
+            const found = dataById[item.productId];
+            if (!found) return item;
+            return {
+                ...item,
+                productName: item.productName ?? found.name,
+                productImage: item.productImage ?? found.image
+            };
+        })
     };
 }
 
@@ -138,7 +170,7 @@ router.get('/:orderId', async (req, res, next) => {
         }
 
         res.setHeader('X-Data-Source', result.source);
-        const body = result.source === 'upstream' ? normalizeOrder(result.data) : result.data;
+        const body = result.source === 'upstream' ? await enrichOrderItems(normalizeOrder(result.data), req) : result.data;
         res.status(200).json(body);
     } catch (err) {
         next(err);
