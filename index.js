@@ -123,6 +123,7 @@ mount('/api/orders', require('./api/orders/routes'), 'Ordenes');
 mount('/api/notifications', require('./api/notifications/routes'), 'Notificaciones');
 mount('/api/chat', require('./api/chat/routes'), 'Chatbot');
 mount('/api/reports', require('./api/reports/routes'), 'Reporteria');
+mount('/api/inventory', require('./api/inventory/routes'), 'Inventario');
 mount('/api/payments', require('./api/payments/routes'), 'Pagos');
 
 app.use((req, res) => {
