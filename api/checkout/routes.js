@@ -105,7 +105,7 @@ router.post('/', async (req, res, next) => {
             })
         });
 
-        const orderId = result.data?.id ?? result.data?.orderId ?? null;
+       const orderId = result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
 
         const payment = await createPayment({
