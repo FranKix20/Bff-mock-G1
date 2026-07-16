@@ -5,6 +5,86 @@ const { getIdempotentResponse, saveIdempotentResponse } = require('../../lib/db'
 const { Errors } = require('../../lib/errors');
 const { fetchNormalizedCart } = require('../../lib/cartNormalize');
 
+/**
+ * Procesa el cobro contra Grupo 6 (Pagos) una vez que el pedido ya fue
+ * creado en G4/G5. Hasta ahora el "método de pago" que elegía el usuario
+ * en el frontend era puramente decorativo: no se llamaba a ningún
+ * servicio de pagos real. Esto lo conecta de verdad:
+ *   1. POST /api/payments (PENDING) con el monto real del carrito.
+ *   2. POST /api/payments/:id/confirm (PENDING -> APPROVED), porque en
+ *      este ecosistema el "pago simulado" del checkout no tiene un paso
+ *      de autorización separado del usuario: al confirmar la compra, el
+ *      pago se da por aprobado de inmediato.
+ * G6 publica PaymentApproved a RabbitMQ tras el confirm, que es lo que
+ * consume G5 para pasar el pedido a PAID y G10 para reportería — sin
+ * este paso, el pedido nunca avanza más allá de STOCK_RESERVED.
+ *
+ * Es best-effort: si G6 no está disponible o el monto no se pudo
+ * determinar (falló el snapshot del carrito), el checkout NO se cae —
+ * ya se le creó el pedido al usuario en G4/G5 — solo se informa que el
+ * pago quedó pendiente de sincronización.
+ */
+async function processPayment({ amount, orderId, idempotencyKey, req }) {
+    if (typeof amount !== 'number' || amount <= 0) {
+        return { status: 'UNAVAILABLE', reason: 'No se pudo determinar el monto a cobrar' };
+    }
+
+    try {
+        const created = await callUpstream({
+            envVarName: 'PAYMENT_SERVICE_URL',
+            method: 'POST',
+            path: '/api/payments',
+            data: { amount, currency: 'CLP', orderId },
+            headers: {
+                'Idempotency-Key': idempotencyKey + '-pay-create',
+                'X-Correlation-Id': req.correlationId
+            },
+            timeout: 15000,
+            req,
+            mockFallback: () => ({
+                id: 'PAY-MOCK-' + Math.floor(1000 + Math.random() * 9000),
+                amount,
+                currency: 'CLP',
+                status: 'PENDING',
+                orderId
+            })
+        });
+
+        const paymentId = created.data && created.data.id;
+        if (!paymentId) {
+            return { status: 'UNAVAILABLE', reason: 'Respuesta de pagos sin id' };
+        }
+
+        const confirmed = await callUpstream({
+            envVarName: 'PAYMENT_SERVICE_URL',
+            method: 'POST',
+            path: '/api/payments/' + paymentId + '/confirm',
+            headers: {
+                'Idempotency-Key': idempotencyKey + '-pay-confirm',
+                'X-Correlation-Id': req.correlationId
+            },
+            timeout: 15000,
+            req,
+            mockFallback: () => Object.assign({}, created.data, { status: 'APPROVED' })
+        });
+
+        return {
+            id: paymentId,
+            status: (confirmed.data && confirmed.data.status) || 'APPROVED',
+            amount: (confirmed.data && confirmed.data.amount) || amount,
+            currency: (confirmed.data && confirmed.data.currency) || 'CLP',
+            confirmedAt: (confirmed.data && confirmed.data.confirmedAt) || new Date().toISOString()
+        };
+    } catch (err) {
+        // Igual que con el resto de upstreams: un 4xx/5xx real de G6 (ej.
+        // rechazo de negocio) no debe camuflarse ni cortar el checkout,
+        // pero sí hay que reflejarlo para no mentirle al usuario diciendo
+        // que su pago fue aprobado cuando no fue así.
+        console.warn('[checkout] Falla al procesar pago con G6:', err.message);
+        return { status: 'UNAVAILABLE', reason: 'El servicio de pagos no respondió' };
+    }
+}
+
 // POST /api/checkout
 // Requiere header Idempotency-Key. Si la misma key ya fue procesada,
 // se devuelve la respuesta guardada en vez de generar un pedido duplicado.
@@ -24,68 +104,4 @@ router.post('/', async (req, res, next) => {
             return Errors.badRequest(req, res, 'El header Idempotency-Key debe ser un UUID válido');
         }
 
-        const existing = await getIdempotentResponse(idempotencyKey);
-        if (existing) {
-            res.setHeader('X-Idempotent-Replay', 'true');
-            return res.status(existing.status_code).json(existing.response);
-        }
-
-        // El paquete de integración de G4 (E5) confirma que POST /checkout
-        // solo acepta { "userId": ... } en el body — paymentMethod y
-        // shippingAddress no son parte de su contrato, así que NO se le
-        // reenvían (evita que una validación estricta de su lado rechace
-        // campos que no reconoce). Se guardan localmente para devolvérselos
-        // al frontend igual, junto con el snapshot del carrito.
-        //
-        // También confirma que la respuesta exitosa de G4 es mínima:
-        // { attemptId, orderId, status, message } — sin items ni
-        // totalAmount. Por eso se saca una foto del carrito ANTES de
-        // llamar a checkout (después del checkout, G4 vacía el carrito) y
-        // se arma la respuesta completa que el frontend ya espera.
-        const cartSnapshot = await fetchNormalizedCart(userId, req).catch(() => null);
-
-        const result = await callUpstream({
-            envVarName: 'CHECKOUT_SERVICE_URL',
-            method: 'POST',
-            path: '/checkout',
-            data: { userId },
-            headers: {
-                'Idempotency-Key': idempotencyKey,
-                'X-Correlation-Id': req.correlationId
-            },
-            // El checkout de G4 encadena una validación con G5. El timeout
-            // default de proxy.js (4s) es insuficiente para esa cadena
-            // completa, sobre todo si algún servicio está recién
-            // despertando en Render.
-            timeout: 15000,
-            req,
-            mockFallback: () => ({
-                attemptId: 'ATT-' + Math.floor(1000 + Math.random() * 9000),
-                orderId: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
-                status: 'SUCCESS',
-                message: 'Orden procesada correctamente (mock)'
-            })
-        });
-
-        const enriched = {
-            orderId: result.data?.orderId ?? null,
-            attemptId: result.data?.attemptId ?? null,
-            status: result.data?.status ?? 'SUCCESS',
-            message: result.data?.message ?? null,
-            totalAmount: cartSnapshot?.totalAmount ?? null,
-            items: cartSnapshot?.items ?? [],
-            paymentMethod: paymentMethod || 'credit_card',
-            shippingAddress: shippingAddress || null,
-            createdAt: new Date().toISOString()
-        };
-
-        await saveIdempotentResponse(idempotencyKey, enriched, 201);
-
-        res.setHeader('X-Data-Source', result.source);
-        res.status(201).json(enriched);
-    } catch (err) {
-        next(err);
-    }
-});
-
-module.exports = router;
+        const existing = await
