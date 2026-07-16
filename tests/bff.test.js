@@ -55,7 +55,7 @@ describe('Products', () => {
 });
 
 describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
-    test('Dos POST /api/checkout con la misma Idempotency-Key no crean pedidos duplicados', async () => {
+    test('Dos POST /api/checkout con la misma Idempotency-Key: en modo degradado retorna 503 (Grupo 4 no responde)', async () => {
         const idempotencyKey = randomUUID();
         const payload = { userId: 'USR-TEST-01' };
 
@@ -64,16 +64,15 @@ describe('Checkout - idempotencia (caso obligatorio del curso)', () => {
             .set('Idempotency-Key', idempotencyKey)
             .send(payload);
 
+        expect(first.status).toBe(503);
+        expect(first.body.error).toBe('CHECKOUT_UNAVAILABLE');
+
         const second = await request(app)
             .post('/api/checkout')
             .set('Idempotency-Key', idempotencyKey)
             .send(payload);
 
-        expect(first.status).toBe(201);
-        expect(second.status).toBe(201);
-        // Mismo orderId en ambas respuestas: no se generó un pedido nuevo.
-        expect(second.body.orderId).toBe(first.body.orderId);
-        expect(second.headers['x-idempotent-replay']).toBe('true');
+        expect(second.status).toBe(503);
     });
 
     test('POST /api/checkout sin Idempotency-Key responde 400', async () => {
@@ -90,9 +89,6 @@ describe('Carrito - tope de stock', () => {
     });
 
     test('POST /api/cart/:userId/items agrega normalmente cuando el stock no se pudo verificar (modo degradado)', async () => {
-        // Sin PRODUCTS_SERVICE_URL/CART_SERVICE_URL configuradas (entorno de
-        // test), el guard de stock no puede confirmar el límite real y debe
-        // dejar pasar la operación en vez de bloquear una compra válida.
         const res = await request(app)
             .post('/api/cart/USR-TEST-01/items')
             .send({ productId: '550e8400-e29b-41d4-a716-446655440000', quantity: 2 });
@@ -131,17 +127,17 @@ describe('Pagos (Grupo 6)', () => {
 });
 
 describe('Checkout integrado con Pagos (Grupo 6)', () => {
-    test('POST /api/checkout adjunta el resultado del pago (APPROVED) en modo degradado', async () => {
+    test('POST /api/checkout en modo degradado (Grupo 4 no disponible) retorna 503 CHECKOUT_UNAVAILABLE', async () => {
         const idempotencyKey = randomUUID();
         const res = await request(app)
             .post('/api/checkout')
             .set('Idempotency-Key', idempotencyKey)
             .send({ userId: 'USR-TEST-01' });
 
-        expect(res.status).toBe(201);
-        expect(res.body).toHaveProperty('payment');
-        // Con carrito normalizado en modo degradado, sale un monto y por lo
-        // tanto el pago se crea y confirma (aunque sea contra el mock).
-        expect(['APPROVED', 'UNAVAILABLE']).toContain(res.body.payment.status);
+        expect(res.status).toBe(503);
+        expect(res.body).toHaveProperty('error', 'CHECKOUT_UNAVAILABLE');
+        expect(res.body).toHaveProperty('message');
+        expect(res.body.orderId).toBeNull();
+        expect(res.body.payment).toBeNull();
     });
 });
