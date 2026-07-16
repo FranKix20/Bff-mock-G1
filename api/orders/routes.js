@@ -29,7 +29,7 @@ const mockOrder = {
 //     responde snake_case (order_number, user_id, total_amount, created_at)
 //     para el mismo tipo de dato.
 //  2. totalAmount cambia de tipo: número en el detalle (49970), string en
-//     el listado ("49970.00"). Normalizamos siempre a number.
+//     el listado ("49970.00"). Normalizamos siempre a number. 
 //  3. Los items del detalle (unit_price, subtotal, product_id) vienen en
 //     snake_case aunque el resto del objeto sea camelCase.
 // G5 tampoco expone productName en los items (solo product_id), igual que
