@@ -5,7 +5,18 @@ const { getIdempotentResponse, saveIdempotentResponse } = require('../../lib/db'
 const { Errors } = require('../../lib/errors');
 const { fetchNormalizedCart } = require('../../lib/cartNormalize');
 
-async function processPayment({ amount, orderId, idempotencyKey, req }) {
+/**
+ * Crea el pago en Grupo 6 (Mercado Pago Checkout Pro) y devuelve el
+ * initPoint para que el FRONTEND redirija al usuario ahí a pagar de
+ * verdad. El BFF NO llama a /confirm — según el contrato real de G6,
+ * confirm/reject son solo para forzar manualmente un estado (demo/testing);
+ * el estado real lo cambia Mercado Pago vía su propio webhook.
+ *
+ * El Authorization del usuario se reenvía automáticamente a G6 porque
+ * callUpstream ya inyecta el header cuando se le pasa `req` (ver
+ * lib/proxy.js) — G6 exige JWT válido de Grupo 2 en este endpoint.
+ */
+async function createPayment({ amount, orderId, idempotencyKey, req }) {
     if (typeof amount !== 'number' || amount <= 0) {
         return { status: 'UNAVAILABLE', reason: 'No se pudo determinar el monto a cobrar' };
     }
@@ -15,7 +26,12 @@ async function processPayment({ amount, orderId, idempotencyKey, req }) {
             envVarName: 'PAYMENT_SERVICE_URL',
             method: 'POST',
             path: '/api/payments',
-            data: { amount, currency: 'CLP', orderId },
+            data: {
+                amount,
+                currency: 'CLP',
+                orderId,
+                description: 'Pedido FishMarket'
+            },
             headers: {
                 'Idempotency-Key': idempotencyKey + '-pay-create',
                 'X-Correlation-Id': req.correlationId
@@ -27,41 +43,25 @@ async function processPayment({ amount, orderId, idempotencyKey, req }) {
                 amount,
                 currency: 'CLP',
                 status: 'PENDING',
-                orderId
+                orderId,
+                initPoint: null
             })
         });
 
-        const paymentId = created.data && created.data.id;
-        if (!paymentId) {
-            return { status: 'UNAVAILABLE', reason: 'Respuesta de pagos sin id' };
-        }
-
-        const confirmed = await callUpstream({
-            envVarName: 'PAYMENT_SERVICE_URL',
-            method: 'POST',
-            path: '/api/payments/' + paymentId + '/confirm',
-            headers: {
-                'Idempotency-Key': idempotencyKey + '-pay-confirm',
-                'X-Correlation-Id': req.correlationId
-            },
-            timeout: 15000,
-            req,
-            mockFallback: () => Object.assign({}, created.data, { status: 'APPROVED' })
-        });
-
         return {
-            id: paymentId,
-            status: (confirmed.data && confirmed.data.status) || 'APPROVED',
-            amount: (confirmed.data && confirmed.data.amount) || amount,
-            currency: (confirmed.data && confirmed.data.currency) || 'CLP',
-            confirmedAt: (confirmed.data && confirmed.data.confirmedAt) || new Date().toISOString()
+            id: created.data?.id ?? null,
+            status: created.data?.status ?? 'PENDING',
+            amount: created.data?.amount ?? amount,
+            currency: created.data?.currency ?? 'CLP',
+            initPoint: created.data?.initPoint ?? null
         };
     } catch (err) {
-        console.warn('[checkout] Falla al procesar pago con G6:', err.message);
+        console.warn('[checkout] Falla al crear pago con G6:', err.message);
         return { status: 'UNAVAILABLE', reason: 'El servicio de pagos no respondió' };
     }
 }
 
+// POST /api/checkout
 router.post('/', async (req, res, next) => {
     try {
         const { userId, paymentMethod, shippingAddress } = req.body;
@@ -108,7 +108,7 @@ router.post('/', async (req, res, next) => {
         const orderId = result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
 
-        const payment = await processPayment({
+        const payment = await createPayment({
             amount: totalAmount,
             orderId,
             idempotencyKey,
