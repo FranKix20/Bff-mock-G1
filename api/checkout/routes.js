@@ -105,7 +105,7 @@ router.post('/', async (req, res, next) => {
             })
         });
 
-        const orderId = result.data?.orderId ?? null;
+        const orderId = result.data?.id ?? result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
 
         const payment = await createPayment({
@@ -116,11 +116,11 @@ router.post('/', async (req, res, next) => {
         });
 
         const enriched = {
-            orderId: result.data?.id ?? result.data?.orderId ?? null,
+            orderId,
             attemptId: result.data?.attemptId ?? null,
             status: result.data?.status ?? 'SUCCESS',
             message: result.data?.message ?? null,
-            totalAmount: cartSnapshot?.totalAmount ?? null,
+            totalAmount,
             items: cartSnapshot?.items ?? [],
             paymentMethod: paymentMethod || 'credit_card',
             shippingAddress: shippingAddress || null,
