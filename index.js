@@ -70,7 +70,8 @@ app.get('/health', (req, res) => {
             orders: !!process.env.ORDERS_SERVICE_URL,
             notifications: !!process.env.NOTIFICATIONS_SERVICE_URL,
             chatbot: !!process.env.CHATBOT_SERVICE_URL,
-            reports: !!process.env.REPORTS_SERVICE_URL
+            reports: !!process.env.REPORTS_SERVICE_URL,
+            payments: !!process.env.PAYMENT_SERVICE_URL
         }
     });
 });
@@ -89,6 +90,7 @@ app.get('/', (req, res) => {
             notifications: '/api/notifications',
             chat: '/api/chat',
             reports: '/api/reports',
+            payments: '/api/payments',
             health: '/health'
         },
         links: {
@@ -121,6 +123,7 @@ mount('/api/orders', require('./api/orders/routes'), 'Ordenes');
 mount('/api/notifications', require('./api/notifications/routes'), 'Notificaciones');
 mount('/api/chat', require('./api/chat/routes'), 'Chatbot');
 mount('/api/reports', require('./api/reports/routes'), 'Reporteria');
+mount('/api/payments', require('./api/payments/routes'), 'Pagos');
 
 app.use((req, res) => {
     sendError(req, res, 404, 'ROUTE_NOT_FOUND', `Ruta no encontrada: ${req.method} ${req.path}`);

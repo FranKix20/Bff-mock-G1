@@ -5,9 +5,63 @@ const { getIdempotentResponse, saveIdempotentResponse } = require('../../lib/db'
 const { Errors } = require('../../lib/errors');
 const { fetchNormalizedCart } = require('../../lib/cartNormalize');
 
+/**
+ * Crea el pago en Grupo 6 (Mercado Pago Checkout Pro) y devuelve el
+ * initPoint para que el FRONTEND redirija al usuario ahí a pagar de
+ * verdad. El BFF NO llama a /confirm — según el contrato real de G6,
+ * confirm/reject son solo para forzar manualmente un estado (demo/testing);
+ * el estado real lo cambia Mercado Pago vía su propio webhook.
+ *
+ * El Authorization del usuario se reenvía automáticamente a G6 porque
+ * callUpstream ya inyecta el header cuando se le pasa `req` (ver
+ * lib/proxy.js) — G6 exige JWT válido de Grupo 2 en este endpoint.
+ */
+async function createPayment({ amount, orderId, idempotencyKey, req }) {
+    if (typeof amount !== 'number' || amount <= 0) {
+        return { status: 'UNAVAILABLE', reason: 'No se pudo determinar el monto a cobrar' };
+    }
+
+    try {
+        const created = await callUpstream({
+            envVarName: 'PAYMENT_SERVICE_URL',
+            method: 'POST',
+            path: '/api/payments',
+            data: {
+                amount,
+                currency: 'CLP',
+                orderId,
+                description: 'Pedido FishMarket'
+            },
+            headers: {
+                'Idempotency-Key': idempotencyKey + '-pay-create',
+                'X-Correlation-Id': req.correlationId
+            },
+            timeout: 15000,
+            req,
+            mockFallback: () => ({
+                id: 'PAY-MOCK-' + Math.floor(1000 + Math.random() * 9000),
+                amount,
+                currency: 'CLP',
+                status: 'PENDING',
+                orderId,
+                initPoint: null
+            })
+        });
+
+        return {
+            id: created.data?.id ?? null,
+            status: created.data?.status ?? 'PENDING',
+            amount: created.data?.amount ?? amount,
+            currency: created.data?.currency ?? 'CLP',
+            initPoint: created.data?.initPoint ?? null
+        };
+    } catch (err) {
+        console.warn('[checkout] Falla al crear pago con G6:', err.message);
+        return { status: 'UNAVAILABLE', reason: 'El servicio de pagos no respondió' };
+    }
+}
+
 // POST /api/checkout
-// Requiere header Idempotency-Key. Si la misma key ya fue procesada,
-// se devuelve la respuesta guardada en vez de generar un pedido duplicado.
 router.post('/', async (req, res, next) => {
     try {
         const { userId, paymentMethod, shippingAddress } = req.body;
@@ -30,18 +84,6 @@ router.post('/', async (req, res, next) => {
             return res.status(existing.status_code).json(existing.response);
         }
 
-        // El paquete de integración de G4 (E5) confirma que POST /checkout
-        // solo acepta { "userId": ... } en el body — paymentMethod y
-        // shippingAddress no son parte de su contrato, así que NO se le
-        // reenvían (evita que una validación estricta de su lado rechace
-        // campos que no reconoce). Se guardan localmente para devolvérselos
-        // al frontend igual, junto con el snapshot del carrito.
-        //
-        // También confirma que la respuesta exitosa de G4 es mínima:
-        // { attemptId, orderId, status, message } — sin items ni
-        // totalAmount. Por eso se saca una foto del carrito ANTES de
-        // llamar a checkout (después del checkout, G4 vacía el carrito) y
-        // se arma la respuesta completa que el frontend ya espera.
         const cartSnapshot = await fetchNormalizedCart(userId, req).catch(() => null);
 
         const result = await callUpstream({
@@ -53,10 +95,6 @@ router.post('/', async (req, res, next) => {
                 'Idempotency-Key': idempotencyKey,
                 'X-Correlation-Id': req.correlationId
             },
-            // El checkout de G4 encadena una validación con G5. El timeout
-            // default de proxy.js (4s) es insuficiente para esa cadena
-            // completa, sobre todo si algún servicio está recién
-            // despertando en Render.
             timeout: 15000,
             req,
             mockFallback: () => ({
@@ -65,6 +103,16 @@ router.post('/', async (req, res, next) => {
                 status: 'SUCCESS',
                 message: 'Orden procesada correctamente (mock)'
             })
+        });
+
+        const orderId = result.data?.orderId ?? null;
+        const totalAmount = cartSnapshot?.totalAmount ?? null;
+
+        const payment = await createPayment({
+            amount: totalAmount,
+            orderId,
+            idempotencyKey,
+            req
         });
 
         const enriched = {
@@ -76,6 +124,7 @@ router.post('/', async (req, res, next) => {
             items: cartSnapshot?.items ?? [],
             paymentMethod: paymentMethod || 'credit_card',
             shippingAddress: shippingAddress || null,
+            payment,
             createdAt: new Date().toISOString()
         };
 
