@@ -5,25 +5,6 @@ const { getIdempotentResponse, saveIdempotentResponse } = require('../../lib/db'
 const { Errors } = require('../../lib/errors');
 const { fetchNormalizedCart } = require('../../lib/cartNormalize');
 
-/**
- * Procesa el cobro contra Grupo 6 (Pagos) una vez que el pedido ya fue
- * creado en G4/G5. Hasta ahora el "método de pago" que elegía el usuario
- * en el frontend era puramente decorativo: no se llamaba a ningún
- * servicio de pagos real. Esto lo conecta de verdad:
- *   1. POST /api/payments (PENDING) con el monto real del carrito.
- *   2. POST /api/payments/:id/confirm (PENDING -> APPROVED), porque en
- *      este ecosistema el "pago simulado" del checkout no tiene un paso
- *      de autorización separado del usuario: al confirmar la compra, el
- *      pago se da por aprobado de inmediato.
- * G6 publica PaymentApproved a RabbitMQ tras el confirm, que es lo que
- * consume G5 para pasar el pedido a PAID y G10 para reportería — sin
- * este paso, el pedido nunca avanza más allá de STOCK_RESERVED.
- *
- * Es best-effort: si G6 no está disponible o el monto no se pudo
- * determinar (falló el snapshot del carrito), el checkout NO se cae —
- * ya se le creó el pedido al usuario en G4/G5 — solo se informa que el
- * pago quedó pendiente de sincronización.
- */
 async function processPayment({ amount, orderId, idempotencyKey, req }) {
     if (typeof amount !== 'number' || amount <= 0) {
         return { status: 'UNAVAILABLE', reason: 'No se pudo determinar el monto a cobrar' };
@@ -76,18 +57,11 @@ async function processPayment({ amount, orderId, idempotencyKey, req }) {
             confirmedAt: (confirmed.data && confirmed.data.confirmedAt) || new Date().toISOString()
         };
     } catch (err) {
-        // Igual que con el resto de upstreams: un 4xx/5xx real de G6 (ej.
-        // rechazo de negocio) no debe camuflarse ni cortar el checkout,
-        // pero sí hay que reflejarlo para no mentirle al usuario diciendo
-        // que su pago fue aprobado cuando no fue así.
         console.warn('[checkout] Falla al procesar pago con G6:', err.message);
         return { status: 'UNAVAILABLE', reason: 'El servicio de pagos no respondió' };
     }
 }
 
-// POST /api/checkout
-// Requiere header Idempotency-Key. Si la misma key ya fue procesada,
-// se devuelve la respuesta guardada en vez de generar un pedido duplicado.
 router.post('/', async (req, res, next) => {
     try {
         const { userId, paymentMethod, shippingAddress } = req.body;
@@ -104,6 +78,63 @@ router.post('/', async (req, res, next) => {
             return Errors.badRequest(req, res, 'El header Idempotency-Key debe ser un UUID válido');
         }
 
-        const existing = await
+        const existing = await getIdempotentResponse(idempotencyKey);
+        if (existing) {
+            res.setHeader('X-Idempotent-Replay', 'true');
+            return res.status(existing.status_code).json(existing.response);
+        }
+
+        const cartSnapshot = await fetchNormalizedCart(userId, req).catch(() => null);
+
+        const result = await callUpstream({
+            envVarName: 'CHECKOUT_SERVICE_URL',
+            method: 'POST',
+            path: '/checkout',
+            data: { userId },
+            headers: {
+                'Idempotency-Key': idempotencyKey,
+                'X-Correlation-Id': req.correlationId
+            },
+            timeout: 15000,
+            req,
+            mockFallback: () => ({
+                attemptId: 'ATT-' + Math.floor(1000 + Math.random() * 9000),
+                orderId: 'ORD-' + Math.floor(1000 + Math.random() * 9000),
+                status: 'SUCCESS',
+                message: 'Orden procesada correctamente (mock)'
+            })
+        });
+
+        const orderId = result.data?.orderId ?? null;
+        const totalAmount = cartSnapshot?.totalAmount ?? null;
+
+        const payment = await processPayment({
+            amount: totalAmount,
+            orderId,
+            idempotencyKey,
+            req
+        });
+
+        const enriched = {
+            orderId,
+            attemptId: result.data?.attemptId ?? null,
+            status: result.data?.status ?? 'SUCCESS',
+            message: result.data?.message ?? null,
+            totalAmount,
+            items: cartSnapshot?.items ?? [],
+            paymentMethod: paymentMethod || 'credit_card',
+            shippingAddress: shippingAddress || null,
+            payment,
+            createdAt: new Date().toISOString()
+        };
+
+        await saveIdempotentResponse(idempotencyKey, enriched, 201);
+
+        res.setHeader('X-Data-Source', result.source);
+        res.status(201).json(enriched);
+    } catch (err) {
+        next(err);
+    }
+});
 
 module.exports = router;
