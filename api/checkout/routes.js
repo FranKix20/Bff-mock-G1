@@ -68,7 +68,7 @@ router.post('/', async (req, res, next) => {
         });
 
         const enriched = {
-            orderId: result.data?.orderId ?? null,
+            orderId: result.data?.id ?? result.data?.orderId ?? null,
             attemptId: result.data?.attemptId ?? null,
             status: result.data?.status ?? 'SUCCESS',
             message: result.data?.message ?? null,
