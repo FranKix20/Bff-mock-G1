@@ -3,6 +3,42 @@ const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 const { Errors } = require('../../lib/errors');
 
+// El listado de notificaciones se veía bien en la validación inicial
+// (título, mensaje, tipo y fecha calzaban con lo esperado), pero eso
+// escondía que G9 usa un nombre de campo distinto para el identificador
+// (`notification_id` en vez de `id`). Como el resto del contenido
+// coincidía, el bug no se notó hasta que se intentó marcar una como
+// leída: el frontend mandaba PATCH /api/notifications/undefined/read
+// porque n.id nunca existió. Se normaliza acá, igual que ya se hace con
+// carrito y pedidos, en vez de confiar en que el campo se llame como el
+// mock asumía.
+function normalizeNotification(n) {
+    if (!n) return n;
+    return {
+        id: n.id ?? n.notification_id ?? n.notificationId ?? n._id ?? null,
+        userId: n.userId ?? n.user_id ?? null,
+        type: n.type ?? null,
+        title: n.title ?? null,
+        message: n.message ?? null,
+        read: n.read ?? n.is_read ?? n.isRead ?? false,
+        createdAt: n.createdAt ?? n.created_at ?? null
+    };
+}
+
+function normalizeNotificationListPayload(payload, fallbackPage, fallbackSize) {
+    const rawItems = payload.data ?? payload.notifications ?? payload.items ?? (Array.isArray(payload) ? payload : []);
+    const meta = payload.pagination ?? payload.meta ?? {};
+    return {
+        data: rawItems.map(normalizeNotification),
+        pagination: {
+            page: meta.page ?? meta.currentPage ?? fallbackPage,
+            size: meta.size ?? meta.pageSize ?? meta.limit ?? fallbackSize,
+            total: meta.total ?? meta.totalItems ?? rawItems.length,
+            totalPages: meta.totalPages ?? 1
+        }
+    };
+}
+
 const mockNotifications = [
     {
         id: 'notif-0001',
@@ -58,7 +94,10 @@ router.get('/', async (req, res, next) => {
         });
 
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        const body = result.source === 'upstream'
+            ? normalizeNotificationListPayload(result.data, page, size)
+            : result.data;
+        res.status(200).json(body);
     } catch (err) {
         next(err);
     }
@@ -67,6 +106,13 @@ router.get('/', async (req, res, next) => {
 // PATCH /api/notifications/:id/read
 router.patch('/:id/read', async (req, res, next) => {
     try {
+        // Si el frontend llega a mandar "undefined" (ej. por un id mal
+        // resuelto en el listado), se corta acá con un 400 claro en vez
+        // de reenviarlo tal cual a G9 y devolver un 404 confuso.
+        if (!req.params.id || req.params.id === 'undefined' || req.params.id === 'null') {
+            return Errors.badRequest(req, res, 'id de notificación inválido');
+        }
+
         const result = await callUpstream({
             envVarName: 'NOTIFICATIONS_SERVICE_URL',
             method: 'PATCH',
@@ -85,7 +131,8 @@ router.patch('/:id/read', async (req, res, next) => {
         }
 
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        const body = result.source === 'upstream' ? normalizeNotification(result.data) : result.data;
+        res.status(200).json(body);
     } catch (err) {
         next(err);
     }
