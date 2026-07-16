@@ -57,7 +57,7 @@ router.post('/', async (req, res, next) => {
         const result = await callUpstream({
             envVarName: 'CHATBOT_SERVICE_URL',
             method: 'POST',
-            path: '/chat',
+            path: '/chat/message',
             data: {
                 session_id: sessionId,
                 message,
