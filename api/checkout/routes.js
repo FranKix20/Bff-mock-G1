@@ -104,7 +104,17 @@ router.post('/', async (req, res, next) => {
                 message: 'Orden procesada correctamente (mock)'
             })
         });
-
+        
+        if (result.source !== 'upstream') {
+            console.warn('[checkout] Grupo 4 no respondió, abortando checkout');
+            return res.status(503).json({
+                error: 'CHECKOUT_UNAVAILABLE',
+                message: 'El servicio de pedidos no está disponible, no se puede procesar el checkout en este momento',
+                orderId: null,
+                payment: null
+            });
+        }
+        
         const orderId = result.data?.id ?? result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
 
