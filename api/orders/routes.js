@@ -29,7 +29,7 @@ const mockOrder = {
 //     responde snake_case (order_number, user_id, total_amount, created_at)
 //     para el mismo tipo de dato.
 //  2. totalAmount cambia de tipo: número en el detalle (49970), string en
-//     el listado ("49970.00"). Normalizamos siempre a number. 
+//     el listado ("49970.00"). Normalizamos siempre a number.
 //  3. Los items del detalle (unit_price, subtotal, product_id) vienen en
 //     snake_case aunque el resto del objeto sea camelCase.
 // G5 tampoco expone productName en los items (solo product_id), igual que
@@ -127,12 +127,18 @@ router.get('/', async (req, res, next) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const size = parseInt(req.query.size) || 10;
+        const statusFilter = req.query.status;
 
         const result = await callUpstream({
             envVarName: 'ORDERS_SERVICE_URL',
             method: 'GET',
             path: '/orders',
-            params: { userId: req.query.userId, page, limit: size, status: req.query.status },
+            // Se manda tanto "size" como "limit": la integración original
+            // se validó contra G5 con "size", pero en algún momento se
+            // agregó "limit" también y no quedó claro cuál quedó vigente.
+            // Mandar los dos es inofensivo (G5 ignora el que no reconoce)
+            // y evita que quede pegado al nombre incorrecto en silencio.
+            params: { userId: req.query.userId, page, size, limit: size, status: statusFilter },
             headers: { 'X-Correlation-Id': req.correlationId },
             req,
             mockFallback: () => ({
@@ -141,13 +147,36 @@ router.get('/', async (req, res, next) => {
             })
         });
         res.setHeader('X-Data-Source', result.source);
-        const body = result.source === 'upstream'
+        let body = result.source === 'upstream'
             ? normalizeOrderListPayload(result.data, page, size)
             : result.data;
+
+        // Red de seguridad: si a pesar de mandarle el status, G5 lo
+        // ignora y devuelve la página sin filtrar (se confirmó que pasa:
+        // pedidos de otros estados aparecen igual con un filtro activo),
+        // se filtra acá antes de responder para que la UI nunca muestre
+        // un resultado que contradice el filtro seleccionado.
+        // Ojo: como el filtrado ocurre DESPUÉS de paginar en G5, el total
+        // y totalPages que se reportan son los de la página ya filtrada,
+        // no los del conjunto completo — puede quedar "de menos" en vez
+        // de exacto si hay más páginas con más coincidencias. Es una
+        // limitación conocida mientras G5 no filtre de verdad en origen.
+        if (result.source === 'upstream' && statusFilter) {
+            const filtered = body.data.filter(
+                (order) => (order.status || '').toUpperCase() === statusFilter.toUpperCase()
+            );
+            body = {
+                ...body,
+                data: filtered,
+                pagination: { ...body.pagination, total: filtered.length, totalPages: 1 }
+            };
+        }
+
         res.status(200).json(body);
     } catch (err) {
         next(err);
     }
+
 });
 
 // GET /api/orders/:orderId
