@@ -1,7 +1,6 @@
 const request = require('supertest');
 const app = require('../index');
 const { randomUUID } = require('crypto');
-
 describe('Health & routing', () => {
     test('GET /health responde 200 con estado UP', async () => {
         const res = await request(app).get('/health');
