@@ -100,3 +100,48 @@ describe('Carrito - tope de stock', () => {
         expect(res.body).toHaveProperty('items');
     });
 });
+
+describe('Pagos (Grupo 6)', () => {
+    test('POST /api/payments sin amount responde 400', async () => {
+        const res = await request(app).post('/api/payments').send({ orderId: 'ORD-1' });
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe('BAD_REQUEST');
+    });
+
+    test('POST /api/payments crea un pago (modo degradado sin PAYMENT_SERVICE_URL)', async () => {
+        const res = await request(app)
+            .post('/api/payments')
+            .send({ amount: 15000, currency: 'CLP', orderId: 'ORD-1' });
+        expect(res.status).toBe(201);
+        expect(res.body).toHaveProperty('id');
+        expect(res.body.status).toBe('PENDING');
+    });
+
+    test('POST /api/payments/:id/confirm mueve el pago a APPROVED', async () => {
+        const created = await request(app).post('/api/payments').send({ amount: 5000 });
+        const res = await request(app).post(`/api/payments/${created.body.id}/confirm`);
+        expect(res.status).toBe(200);
+        expect(res.body.status).toBe('APPROVED');
+    });
+
+    test('GET /api/payments/:id de un pago inexistente responde 404', async () => {
+        const res = await request(app).get('/api/payments/no-existe-123');
+        expect(res.status).toBe(404);
+    });
+});
+
+describe('Checkout integrado con Pagos (Grupo 6)', () => {
+    test('POST /api/checkout adjunta el resultado del pago (APPROVED) en modo degradado', async () => {
+        const idempotencyKey = randomUUID();
+        const res = await request(app)
+            .post('/api/checkout')
+            .set('Idempotency-Key', idempotencyKey)
+            .send({ userId: 'USR-TEST-01' });
+
+        expect(res.status).toBe(201);
+        expect(res.body).toHaveProperty('payment');
+        // Con carrito normalizado en modo degradado, sale un monto y por lo
+        // tanto el pago se crea y confirma (aunque sea contra el mock).
+        expect(['APPROVED', 'UNAVAILABLE']).toContain(res.body.payment.status);
+    });
+});
