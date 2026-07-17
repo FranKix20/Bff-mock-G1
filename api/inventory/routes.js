@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { callUpstream } = require('../../lib/proxy');
 
-// Proxy a Grupo 10 (Reportería) — mismo servicio que /api/reports, pero
+// Proxy a Grupo 10 (Reportería) — mismo servicio que /api/reports, pero 
 // su endpoint de inventario vive bajo un prefijo distinto en su lado
 // (/api/v1/inventory en vez de /api/v1/reports), así que necesita su
 // propio router aunque reutilice la misma variable de entorno.
