@@ -9,16 +9,46 @@ const { uuid } = require('../../lib/uuid');
 // OJO: esto es distinto de /api/inventory, que ya existe y apunta al
 // reporte de "bajo stock" de Grupo 10 (Reportería). Grupo 7 expone su
 // propio servicio de inventario real (crear/consultar/ajustar stock por
-// producto), confirmado contra su repo:
-//   GET  /inventory              -> lista paginada { data, pagination }
-//   GET  /inventory/:productId   -> { productId, availableStock,
-//                                     reservedStock, totalStock, virtualStock }
-//   POST /inventory/:productId/stock  -> exige Authorization Bearer (admin,
-//                                     validado por ellos contra G2) +
-//                                     Idempotency-Key. Body: { quantity,
-//                                     operation: 'SET' | 'ADD' }.
-// callUpstream ya reenvía Authorization y agrega X-Consumer automáticamente
-// (ver lib/proxy.js), así que no hay que repetir eso acá.
+// producto).
+//
+// El resto de las integraciones (G4 carrito, G5 pedidos, G9
+// notificaciones) ya nos enseñaron la misma lección: no confiar en que
+// el nombre/forma exacta de los campos coincida con lo que dice la doc,
+// y normalizar defensivamente. Acá se aplica lo mismo — sync-catalog
+// probó ser real (crea filas en G7 de verdad), pero el listado nunca se
+// había verificado contra la forma real de respuesta de G7, así que
+// aunque las filas existieran, el frontend no las encontraba y todo
+// seguía mostrando "Sin registrar".
+function normalizeStockRow(row) {
+    if (!row) return row;
+    return {
+        productId: row.productId ?? row.product_id ?? row.productID ?? row.id ?? null,
+        availableStock: row.availableStock ?? row.available_stock ?? row.available ?? null,
+        reservedStock: row.reservedStock ?? row.reserved_stock ?? row.reserved ?? null,
+        totalStock: row.totalStock ?? row.total_stock ?? row.total ?? null,
+        virtualStock: row.virtualStock ?? row.virtual_stock ?? null
+    };
+}
+
+function normalizeStockListPayload(payload, fallbackPage, fallbackSize) {
+    if (Array.isArray(payload)) {
+        return {
+            data: payload.map(normalizeStockRow),
+            pagination: { page: fallbackPage, size: fallbackSize, total: payload.length, totalPages: 1 }
+        };
+    }
+    const rawItems = payload?.data ?? payload?.items ?? payload?.inventory ?? payload?.results ?? [];
+    const meta = payload?.pagination ?? payload?.meta ?? {};
+    return {
+        data: rawItems.map(normalizeStockRow),
+        pagination: {
+            page: meta.page ?? meta.currentPage ?? fallbackPage,
+            size: meta.size ?? meta.pageSize ?? meta.limit ?? fallbackSize,
+            total: meta.total ?? meta.totalItems ?? rawItems.length,
+            totalPages: meta.totalPages ?? 1
+        }
+    };
+}
 
 // GET /api/stock?page=&size=
 router.get('/', async (req, res, next) => {
@@ -39,7 +69,10 @@ router.get('/', async (req, res, next) => {
             })
         });
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        const body = result.source === 'upstream'
+            ? normalizeStockListPayload(result.data, page, size)
+            : result.data;
+        res.status(200).json(body);
     } catch (err) {
         next(err);
     }
@@ -83,7 +116,7 @@ router.get('/:productId', async (req, res, next) => {
 
         if (result.source === 'upstream') {
             res.setHeader('X-Data-Source', result.source);
-            return res.status(200).json(result.data);
+            return res.status(200).json(normalizeStockRow(result.data));
         }
 
         // Sin INVENTORY_SERVICE_URL configurada o G7 caído: no se inventa
@@ -150,7 +183,7 @@ router.post('/:productId', async (req, res, next) => {
         });
 
         res.setHeader('X-Data-Source', result.source);
-        res.status(200).json(result.data);
+        res.status(200).json(normalizeStockRow(result.data));
     } catch (err) {
         next(err);
     }
