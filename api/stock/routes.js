@@ -45,6 +45,30 @@ router.get('/', async (req, res, next) => {
     }
 });
 
+// POST /api/stock/sync-catalog
+// Dispara la sincronización real de G7 (GET catálogo de G3 -> crea la
+// fila de inventario de cada producto que aún no tenga una). Es
+// idempotente de su lado (INSERT ON CONFLICT DO NOTHING) — se puede
+// llamar cuantas veces haga falta sin riesgo de duplicar ni de pisar
+// stock ya gestionado. Debe registrarse ANTES de GET/POST /:productId
+// para que Express no confunda "sync-catalog" con un productId.
+router.post('/sync-catalog', async (req, res, next) => {
+    try {
+        const result = await callUpstream({
+            envVarName: 'INVENTORY_SERVICE_URL',
+            method: 'POST',
+            path: '/inventory/sync-catalog',
+            headers: { 'X-Correlation-Id': req.correlationId },
+            timeout: 15000,
+            req
+        });
+        res.setHeader('X-Data-Source', result.source);
+        res.status(200).json(result.data);
+    } catch (err) {
+        next(err);
+    }
+});
+
 // GET /api/stock/:productId
 router.get('/:productId', async (req, res, next) => {
     try {
