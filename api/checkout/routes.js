@@ -61,6 +61,50 @@ async function createPayment({ amount, orderId, idempotencyKey, req }) {
     }
 }
 
+/**
+ * G4 devuelve el "order_number" legible (ej. "ORD-1784177256148") en su
+ * campo `orderId` — pero la clave primaria real del pedido en G5 es un
+ * UUID, y es ESE UUID el que G5 necesita recibir de vuelta en el webhook
+ * de PaymentApproved para poder encontrar el pedido y disparar el resto
+ * de la cadena (pasar a PAID, avisar a G8 para crear el envío, etc).
+ * Si a G6 le mandamos el order_number como orderId, el pago se aprueba
+ * igual, pero G5 nunca logra correlacionarlo con nada — es exactamente
+ * el problema que confirmaron entre G4/G5/G6.
+ *
+ * Se resuelve el UUID real consultando el mismo listado de G5 que ya usa
+ * el resto del BFF (GET /orders?userId=...), buscando el pedido cuyo
+ * order_number coincide con el que acaba de devolver G4. El checkout de
+ * G4 ya valida sincrónicamente contra G5 antes de responder, así que el
+ * pedido debería existir ahí de inmediato — no hace falta reintentar.
+ *
+ * Es best-effort: si G5 no responde o no aparece el match (por ejemplo,
+ * si G5 está temporalmente degradado), se hace fallback al order_number
+ * tal cual, que es el comportamiento anterior — el pago igual se crea,
+ * solo que sin garantía de que G5 lo pueda correlacionar automáticamente.
+ */
+async function resolveOrderUuid(userId, orderNumber, req) {
+    if (!userId || !orderNumber) return null;
+    try {
+        const result = await callUpstream({
+            envVarName: 'ORDERS_SERVICE_URL',
+            method: 'GET',
+            path: '/orders',
+            params: { userId, page: 1, size: 20, limit: 20 },
+            headers: { 'X-Correlation-Id': req.correlationId },
+            timeout: 8000,
+            req,
+            mockFallback: () => ({ data: [] })
+        });
+
+        const list = result.data?.data || result.data?.items || [];
+        const match = list.find((o) => (o.order_number ?? o.orderNumber) === orderNumber);
+        return match?.id ?? null;
+    } catch (err) {
+        console.warn('[checkout] No se pudo resolver el UUID del pedido en G5:', err.message);
+        return null;
+    }
+}
+
 // POST /api/checkout
 router.post('/', async (req, res, next) => {
     try {
@@ -105,18 +149,31 @@ router.post('/', async (req, res, next) => {
             })
         });
             
-        const orderId = result.data?.id ?? result.data?.orderId ?? null;
+        const orderNumber = result.data?.id ?? result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
+
+        // Este es el paso que cierra el problema: el pago en G6 se crea
+        // con el UUID real de G5 (si se pudo resolver), no con el
+        // order_number legible que devuelve G4.
+        const resolvedOrderUuid = await resolveOrderUuid(userId, orderNumber, req);
+        const paymentOrderId = resolvedOrderUuid || orderNumber;
+
+        if (orderNumber && !resolvedOrderUuid) {
+            console.warn(
+                `[checkout] No se pudo resolver el UUID de G5 para el pedido ${orderNumber}; ` +
+                'se envió a G6 el order_number como fallback, sin garantía de correlación en G5.'
+            );
+        }
 
         const payment = await createPayment({
             amount: totalAmount,
-            orderId,
+            orderId: paymentOrderId,
             idempotencyKey,
             req
         });
 
         const enriched = {
-            orderId,
+            orderId: orderNumber,
             attemptId: result.data?.attemptId ?? null,
             status: result.data?.status ?? 'SUCCESS',
             message: result.data?.message ?? null,
