@@ -71,7 +71,8 @@ app.get('/health', (req, res) => {
             notifications: !!process.env.NOTIFICATIONS_SERVICE_URL,
             chatbot: !!process.env.CHATBOT_SERVICE_URL,
             reports: !!process.env.REPORTS_SERVICE_URL,
-            payments: !!process.env.PAYMENT_SERVICE_URL
+            payments: !!process.env.PAYMENT_SERVICE_URL,
+            stock: !!process.env.INVENTORY_SERVICE_URL
         }
     });
 });
@@ -91,6 +92,7 @@ app.get('/', (req, res) => {
             chat: '/api/chat',
             reports: '/api/reports',
             payments: '/api/payments',
+            stock: '/api/stock',
             health: '/health'
         },
         links: {
@@ -124,6 +126,7 @@ mount('/api/notifications', require('./api/notifications/routes'), 'Notificacion
 mount('/api/chat', require('./api/chat/routes'), 'Chatbot');
 mount('/api/reports', require('./api/reports/routes'), 'Reporteria');
 mount('/api/inventory', require('./api/inventory/routes'), 'Inventario');
+mount('/api/stock', require('./api/stock/routes'), 'Stock (G7)');
 mount('/api/payments', require('./api/payments/routes'), 'Pagos');
 
 app.use((req, res) => {

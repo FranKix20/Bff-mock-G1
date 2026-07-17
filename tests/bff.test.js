@@ -145,3 +145,32 @@ describe('Checkout integrado con Pagos (Grupo 6)', () => {
         expect(['APPROVED', 'UNAVAILABLE']).toContain(res.body.payment.status);
     });
 });
+
+describe('Stock (Grupo 7)', () => {
+    test('GET /api/stock responde 200 con lista paginada (modo degradado sin INVENTORY_SERVICE_URL)', async () => {
+        const res = await request(app).get('/api/stock');
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('data');
+        expect(res.body).toHaveProperty('pagination');
+    });
+
+    test('GET /api/stock/:productId no inventa un stock real en modo degradado', async () => {
+        const res = await request(app).get('/api/stock/prod-test-01');
+        expect(res.status).toBe(200);
+        expect(res.body.availableStock).toBeNull();
+        expect(res.body.unavailable).toBe(true);
+    });
+
+    test('POST /api/stock/:productId sin quantity responde 400', async () => {
+        const res = await request(app).post('/api/stock/prod-test-01').send({ operation: 'SET' });
+        expect(res.status).toBe(400);
+    });
+
+    test("POST /api/stock/:productId con operation inválida responde 400", async () => {
+        const res = await request(app)
+            .post('/api/stock/prod-test-01')
+            .send({ quantity: 10, operation: 'MULTIPLY' });
+        expect(res.status).toBe(400);
+    });
+});
+
