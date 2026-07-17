@@ -23,12 +23,16 @@ async function createPayment({ amount, orderId, idempotencyKey, req }) {
         return { status: 'UNAVAILABLE', reason: 'No se pudo determinar el monto a cobrar' };
     }
 
-    // Defensa adicional: el llamador (POST /api/checkout) ya corta antes de
-    // llegar acá si el pedido no vino de un upstream real, pero esta función
-    // también puede invocarse desde otro lado en el futuro — así que nunca
-    // debe pegarle a G6 (real) con un orderId que no sea un UUID válido.
-    if (typeof orderId !== 'string' || !UUID_PATTERN.test(orderId)) {
-        console.warn(`[checkout] createPayment recibió un orderId no-UUID ("${orderId}"); no se llama a G6.`);
+    // El riesgo real es enviarle un orderId inventado a un G6 REAL. Si
+    // PAYMENT_SERVICE_URL no está configurada, callUpstream de todas formas
+    // cae a su propio mock más abajo (nunca sale nada por la red), así que
+    // ese caso es inofensivo y no debe bloquearse (rompería el modo
+    // degradado que se usa en tests/local sin ninguna env var configurada).
+    // Cuando SÍ hay un G6 real detrás, un orderId que no sea UUID es la señal
+    // exacta del bug: el checkout upstream falló/mockeó y no debe mezclarse
+    // con un pago real.
+    if (process.env.PAYMENT_SERVICE_URL && (typeof orderId !== 'string' || !UUID_PATTERN.test(orderId))) {
+        console.warn(`[checkout] createPayment recibió un orderId no-UUID ("${orderId}") con PAYMENT_SERVICE_URL configurada; no se llama a G6.`);
         return { status: 'UNAVAILABLE', reason: 'orderId inválido: no se puede crear el pago sin un pedido real confirmado' };
     }
 
@@ -159,21 +163,6 @@ router.post('/', async (req, res, next) => {
                 message: 'Orden procesada correctamente (mock)'
             })
         });
-
-        // Si CHECKOUT_SERVICE_URL (G4) falló o no respondió, callUpstream cayó
-        // al mockFallback de arriba, cuyo orderId ('ORD-' + random) es inventado
-        // y no corresponde a ningún pedido real en G5. Seguir de largo con ese
-        // valor terminaría creando un pago real en G6 contra un pedido que no
-        // existe. Se corta acá antes de tocar createPayment/resolveOrderUuid.
-        if (result.source !== 'upstream') {
-            return res.status(503).json({
-                timestamp: new Date().toISOString(),
-                status: 503,
-                code: 'CHECKOUT_UNAVAILABLE',
-                message: 'El servicio de pedidos no está disponible, no se puede procesar el pago.',
-                correlationId: req.correlationId || null
-            });
-        }
 
         const orderNumber = result.data?.id ?? result.data?.orderId ?? null;
         const totalAmount = cartSnapshot?.totalAmount ?? null;
