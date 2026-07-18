@@ -36,11 +36,11 @@ const mockChatResponse = (sessionId, message) => ({
 });
 
 // POST /api/chat
-// IMPORTANTE: el contrato openapi de G11 (v1.2) documenta este endpoint
-// como POST /chat/message, pero el código real desplegado (chat.routes.ts)
-// lo expone en POST /chat, sin /message. Se usa la ruta real verificada en
-// el código fuente, no la del documento, porque es la que efectivamente
-// responde en producción.
+// El contrato openapi de G11 (v1.2) documenta este endpoint como
+// POST /chat/message, pero el código real desplegado (chat.routes.ts) lo
+// expone en POST /chat, sin /message. Se usa la ruta real verificada en
+// el código fuente (no la del documento) porque es la que efectivamente
+// responde en producción — con /chat/message G11 devuelve 404.
 router.post('/', async (req, res, next) => {
     try {
         const { sessionId, message, userId } = req.body || {};
@@ -57,7 +57,7 @@ router.post('/', async (req, res, next) => {
         const result = await callUpstream({
             envVarName: 'CHATBOT_SERVICE_URL',
             method: 'POST',
-            path: '/chat/message',
+            path: '/chat',
             data: {
                 session_id: sessionId,
                 message,
@@ -67,6 +67,14 @@ router.post('/', async (req, res, next) => {
                 'X-Correlation-Id': req.correlationId,
                 ...(apiKey ? { 'X-Api-Key': apiKey } : {})
             },
+            // Sin esto, callUpstream usaba su default de 4000ms — muy
+            // corto para una respuesta de IA (Gemini) real, y peor aún si
+            // el servicio de Render estaba dormido (30-50s para
+            // "despertar" en el primer request). El resultado era que el
+            // BFF se rendía y caía al mock aunque G11 fuera a responder
+            // bien un par de segundos después. Health/FAQ no llaman a un
+            // LLM, por eso a esos sí les alcanzaba el default.
+            timeout: 20000,
             req,
             mockFallback: () => mockChatResponse(sessionId, message)
         });
